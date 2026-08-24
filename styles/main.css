@@ -1,0 +1,32 @@
+/* 页面只负责承载游戏；水墨效果主要由 Phaser 场景绘制，避免依赖外部图片。 */
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(circle at top, #324c48, #101b1c 72%);
+  font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+#game-root {
+  width: 100vw;
+  height: 100vh;
+  /* 游戏画面始终占满浏览器可见区域，不保留网页边框或空白。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas {
+  /* Phaser 会自己计算按比例填满的画布尺寸；这里不再二次缩放它。 */
+  display: block;
+  box-shadow: 0 20px 70px rgb(0 0 0 / 55%);
+}

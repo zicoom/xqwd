@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>玄穹问道 · 第一章原型</title>
+    <link rel="stylesheet" href="./styles/main.css" />
+    <!-- Phaser 已保存在项目本地，家里网络断开或 CDN 不稳定时也能正常启动游戏。 -->
+    <script src="./public/vendor/phaser/phaser-3.90.0.min.js"></script>
+  </head>
+  <body>
+    <!-- Phaser 会把游戏画布插入到这个容器中。 -->
+    <main id="game-root"></main>
+    <!-- 所有游戏逻辑使用 ES Module，方便按文件拆分、长期维护。 -->
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
