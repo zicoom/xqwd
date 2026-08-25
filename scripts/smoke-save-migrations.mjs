@@ -35,6 +35,9 @@ assert.deepEqual(migrated.data.player.inventory, { herb: 3 });
 assert.deepEqual(migrated.data.player.equippedTechniques.auxiliary, ["a", null, null, null]);
 assert.equal(migrated.data.player.equippedArtifacts.攻击, "artifact-1");
 assert.equal("未知槽" in migrated.data.player.equippedArtifacts, false);
+assert.equal(migrated.data.player.combatShortcuts.length, 10);
+assert.deepEqual(migrated.data.player.combatShortcuts[0], { kind: "action", id: "normal-attack" });
+assert.deepEqual(migrated.data.player.combatShortcuts[1], { kind: "spell", id: "element-fire" });
 assert.deepEqual(migrated.data.world.defeatedMonsterIds, []);
 assert.deepEqual(migrated.data.world.merchantStock, { soldOut: 0, available: 9, invalid: 0 });
 assert.equal(JSON.stringify(legacy), snapshot, "迁移不能修改读入的原始存档");
@@ -61,7 +64,7 @@ assert.equal(created.version, CURRENT_SAVE_CONTAINER_VERSION);
 assert.equal(created.slots.length, 5);
 assert.notEqual(defaults.player.equippedTechniques, createDefaultSaveData().player.equippedTechniques);
 
-// 用内存 localStorage 验证 GameState 会从旧键复制到稳定键，并始终回写 v2。
+// 用内存 localStorage 验证 GameState 会从旧键复制到稳定键，并始终回写当前版本。
 class MemoryStorage {
   constructor() { this.values = new Map(); }
   get length() { return this.values.size; }

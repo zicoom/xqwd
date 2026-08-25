@@ -18,6 +18,7 @@ import {
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
 import { addText, playUiClickSound } from "../utils/UiHelpers.js";
+import { optimiseImageForStorage, prepareImageForStorage } from "../utils/ImageStorage.js";
 
 /**
  * 物品管理编辑器。
@@ -705,41 +706,12 @@ export class ItemEditorScene extends Phaser.Scene {
   // 上传时不限制原图文件大小。图片会在浏览器内自动转成适合游戏图标的格式，
   // 这样商店和储物袋依然清晰，同时不会因为本地存档空间被图片撑满而保存失败。
   prepareImageForStorage(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error);
-      reader.onload = () => {
-        this.optimiseImageForStorage(String(reader.result || ""), 256, 0.76).then(resolve, reject);
-      };
-      reader.readAsDataURL(file);
-    });
+    return prepareImageForStorage(file, { maxSide: 256, quality: 0.76 });
   }
 
   // 将已有素材也一并整理；旧版本上传的图片可以在下一次保存时自动变轻。
   optimiseImageForStorage(sourceData, maxSide = 256, quality = 0.76) {
-    if (!sourceData) return Promise.resolve("");
-    return new Promise((resolve, reject) => {
-      const source = new Image();
-      source.onerror = () => reject(new Error("图片无法读取"));
-      source.onload = () => {
-        try {
-          const scale = Math.min(1, maxSide / Math.max(source.width, source.height));
-          const width = Math.max(1, Math.round(source.width * scale));
-          const height = Math.max(1, Math.round(source.height * scale));
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const context = canvas.getContext("2d");
-          context.drawImage(source, 0, 0, width, height);
-          const imageData = canvas.toDataURL("image/webp", quality);
-          if (!imageData || imageData.length < 32) throw new Error("图片处理失败");
-          resolve(imageData);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      source.src = sourceData;
-    });
+    return optimiseImageForStorage(sourceData, maxSide, quality);
   }
 
   loadItemTexture(item, replace = false) {

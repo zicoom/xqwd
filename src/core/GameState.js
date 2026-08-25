@@ -120,6 +120,29 @@ export function saveFirstChapterProgress() {
   }
 }
 
+/** 创建当前角色的独立快照，供五档手动存档页保存；不会在快照中递归包含档案页本身。 */
+export function createCurrentProgressSnapshot() {
+  return createSaveData(gameState);
+}
+
+/**
+ * 把手动档位快照恢复到当前角色，并立即写回当前角色档案。
+ * 当前游玩的角色档案位保持不变，避免读取快照后跳到另一个角色。
+ */
+export function restoreCurrentProgressSnapshot(snapshot) {
+  try {
+    const migrated = migrateSaveData(snapshot);
+    if (!migrated.ok) return false;
+    replaceObject(gameState.player, migrated.data.player);
+    replaceObject(gameState.chapter, migrated.data.chapter);
+    replaceObject(gameState.world, migrated.data.world);
+    return saveFirstChapterProgress();
+  } catch (error) {
+    console.warn("手动存档快照读取失败：", error);
+    return false;
+  }
+}
+
 /** 只检查是否存在有效角色档案，不会把档案数据写入当前游戏状态。 */
 export function hasFirstChapterProgress() {
   return getSaveSlots().some((slot) => isValidSaveData(slot));

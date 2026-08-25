@@ -6,6 +6,7 @@ import { ItemCatalog } from "../domain/items/ItemCatalog.js";
 import { SpellService } from "../domain/spells/SpellService.js";
 import { CombatEngine, calculatePlayerInitiative } from "../domain/combat/CombatEngine.js";
 import { BattleRewardService } from "../domain/rewards/BattleRewardService.js";
+import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
 
 const CHAPTER_ELITE_REWARDS = ["灵石 × 12", "低阶回灵丹 × 1", "蚀月盟令牌残片 × 1"];
 const DEFAULT_MONSTER_REWARDS = ["灵石 × 3", "低阶材料 × 1"];
@@ -55,7 +56,7 @@ export class BattleScene extends Phaser.Scene {
     const config = this.mapMonster?.battle;
     // 编辑器怪物若上传了图片，就在本场战斗使用该图片；
     // 没上传时继续使用默认噬魂魔蛛的 153 帧动作，保证旧内容不受影响。
-    this.usesCustomEnemyPortrait = Boolean(config?.imageData);
+    this.usesCustomEnemyPortrait = Boolean(resolveMonsterAppearance(config).staticImageData);
     this.enemy = config
       ? {
         name: this.mapMonster.name,
@@ -147,9 +148,10 @@ export class BattleScene extends Phaser.Scene {
    * 文件数据保存在浏览器本地，因此不依赖服务器，也能在离线网页游戏里工作。
    */
   loadCustomEnemyPortrait() {
-    const imageData = this.mapMonster?.battle?.imageData;
+    const appearance = resolveMonsterAppearance(this.mapMonster?.battle);
+    const imageData = appearance.staticImageData;
     if (!imageData) return;
-    const textureKey = `battle-monster-custom-${this.mapMonster.battle.id}`;
+    const textureKey = getMonsterAppearanceTextureKey(this.mapMonster.battle, "battle-monster-custom");
     const applyTexture = () => {
       // 图片可能是方形或竖图；先限制在 280×280 范围内，再按原比例缩放。
       const source = this.textures.get(textureKey).getSourceImage();
@@ -157,7 +159,14 @@ export class BattleScene extends Phaser.Scene {
       if (this.enemyAvatar?.active) this.enemyAvatar.setTexture(textureKey).setDisplaySize(source.width * scale, source.height * scale).clearTint();
     };
     if (this.textures.exists(textureKey)) applyTexture();
-    else this.textures.addBase64(textureKey, imageData, applyTexture);
+    else {
+      const image = new Image();
+      image.onload = () => {
+        if (!this.textures.exists(textureKey)) this.textures.addImage(textureKey, image);
+        applyTexture();
+      };
+      image.src = imageData;
+    }
   }
 
   /** 绘制双方生命、灵气条；长度会随数值实时变化。 */

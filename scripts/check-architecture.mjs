@@ -89,6 +89,22 @@ for (const file of collectJavaScriptFiles(sourceRoot)) {
       failures.push(`${relativePath}: 战斗场景不能直接发放奖励或推进击败进度`);
     }
   }
+  if (relativePath === "src/scenes/VillageScene.js") {
+    if (!/from\s+["'][^"']*\/domain\/quests\/ChapterQuestService\.js["']/.test(executableSource)) {
+      failures.push(`${relativePath}: 第一章场景必须通过 ChapterQuestService 推进章节任务`);
+    }
+    if (/gameState\.(?:chapter\.(?:qingyunInvestigation|qingyunGuideEnabled|ancientJadeFound)|player\.hasJade)\b/.test(executableSource)) {
+      failures.push(`${relativePath}: 场景不能直接读取或修改章节任务状态，应调用 ChapterQuestService`);
+    }
+  }
+  if (relativePath === "src/ui/ChapterMapHud.js") {
+    if (/\bsaveFirstChapterProgress\b/.test(executableSource)) {
+      failures.push(`${relativePath}: HUD 不能直接保存章节任务，应由 ChapterQuestService 负责`);
+    }
+    if (/gameState\.(?:chapter\.(?:qingyunInvestigation|qingyunGuideEnabled|ancientJadeFound)|player\.hasJade)\b/.test(executableSource)) {
+      failures.push(`${relativePath}: HUD 不能直接读取或修改章节任务状态，应消费任务视图数据`);
+    }
+  }
 }
 
 if (failures.length) {

@@ -47,6 +47,8 @@ function writeTemplates(key, templates, normalize) {
 
 export function normalizeNpc(npc = {}) {
   const oldImageData = npc.imageData || "";
+  // 新版只维护一张 NPC 立绘；旧档若只有头像或 imageData，也会自动迁移为立绘。
+  const portraitData = npc.portraitData || oldImageData || npc.avatarData || "";
   const profile = npc.profile || {};
   const roots = profile.roots || {};
   // 新建 NPC 是一张真正的空白表单；已有 NPC 与旧存档则继续沿用原来的默认资料。
@@ -82,12 +84,12 @@ export function normalizeNpc(npc = {}) {
     merchant: Boolean(npc.merchant),
     name: isNew ? String(npc.name ?? "").trim() : (String(npc.name || "未命名 NPC").trim() || "未命名 NPC"),
     // 旧版本只有 imageData：迁移时同时当作立绘和头像，旧存档不会丢图。
-    portraitData: npc.portraitData || oldImageData,
-    avatarData: npc.avatarData || oldImageData,
+    portraitData,
+    avatarData: portraitData,
     // 地图中使用的角色立绘与对话半身像分开保存：尚未制作时由大地图显示问号标记。
     mapPortraitData: npc.mapPortraitData || "",
     // 地图中的 NPC 外观沿用头像数据，保留旧字段以兼容地图编辑器与已放置 NPC。
-    imageData: npc.avatarData || oldImageData,
+    imageData: portraitData,
     dialogue: Array.isArray(npc.dialogue) && npc.dialogue.length ? npc.dialogue.filter(Boolean) : (isNew ? [] : ["……"]),
     // 分支对话：每个 NPC 回复节点可挂多条主角选择，选择再跳往不同节点。
     dialogueTree: dialogueNodes.length ? {
@@ -138,13 +140,46 @@ export function saveNpcTemplates(items) { return writeTemplates(NPC_KEY, items, 
 export function getNpcTemplate(id) { return getNpcTemplates().find((item) => item.id === id) || null; }
 
 export function normalizeBuilding(building = {}) {
+  const rawCollision = building.collision || {};
+  const normalizedPoints = Array.isArray(rawCollision.points)
+    ? rawCollision.points.slice(0, 64).map((point) => ({
+      x: Math.min(1, Math.max(0, Number(point?.x))),
+      y: Math.min(1, Math.max(0, Number(point?.y))),
+    })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    : [];
+  const collisionEnabled = rawCollision.enabled ?? building.blocked ?? false;
+  const interaction = building.interaction || {};
   return {
     id: building.id || `building-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
     name: String(building.name || "未命名建筑").trim() || "未命名建筑",
-    type: building.type || "建筑",
-    blocked: Boolean(building.blocked),
+    type: String(building.type || "建筑").trim() || "建筑",
+    // 旧版的 blocked 仍保留，保证已放置建筑的移动规则不会丢失；新版以 collision 为唯一编辑入口。
+    blocked: Boolean(collisionEnabled),
     imageData: building.imageData || "",
-    interactionText: building.interactionText || "这是一座建筑。",
+    display: {
+      width: Math.min(1024, Math.max(48, Number(building.display?.width) || 256)),
+      height: Math.min(1024, Math.max(48, Number(building.display?.height) || 256)),
+      anchor: building.display?.anchor === "center" ? "center" : "bottom",
+    },
+    // 顶点使用 0 到 1 的相对坐标；无论地图上缩放多少，碰撞形状都能和建筑图片保持一致。
+    collision: {
+      enabled: Boolean(collisionEnabled),
+      shape: rawCollision.shape === "rectangle" ? "rectangle" : "polygon",
+      // 旧版只有“阻挡 / 可穿过”开关。第一次升级时给阻挡建筑一块可继续编辑的默认矩形，
+      // 保证旧建筑不会因为尚未手绘而突然失去碰撞范围。
+      points: normalizedPoints.length
+        ? normalizedPoints
+        : (collisionEnabled ? [{ x: 0.14, y: 0.55 }, { x: 0.86, y: 0.55 }, { x: 0.86, y: 0.95 }, { x: 0.14, y: 0.95 }] : []),
+    },
+    interaction: {
+      enabled: interaction.enabled ?? Boolean(building.interactionText),
+      kind: ["dialogue", "shop", "teleport", "scene", "sect"].includes(interaction.kind) ? interaction.kind : "dialogue",
+      title: String(interaction.title || building.name || "建筑交互").trim(),
+      prompt: String(interaction.prompt || building.interactionText || "这是一座建筑。").trim(),
+      targetId: String(interaction.targetId || "").trim(),
+    },
+    // 保留给旧版 VillageScene 的读取字段；新版编辑器改动后会同步写回这里。
+    interactionText: String(interaction.prompt || building.interactionText || "这是一座建筑。").trim(),
   };
 }
 export function getBuildingTemplates() { return readTemplates(BUILDING_KEY, DEFAULT_BUILDINGS, normalizeBuilding); }

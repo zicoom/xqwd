@@ -1,4 +1,6 @@
-import { gameState, saveFirstChapterProgress } from "../core/GameState.js";
+import { gameState } from "../core/GameState.js";
+import { getPlayerPortrait } from "../core/PortraitCatalog.js";
+import { QINGYUN_INVESTIGATION_ID } from "../domain/quests/ChapterQuestService.js";
 import { addButton, addText, playUiClickSound } from "../utils/UiHelpers.js";
 
 /**
@@ -11,8 +13,9 @@ import { addButton, addText, playUiClickSound } from "../utils/UiHelpers.js";
  * 本文件全部使用 1920×1080 一对一像素坐标；填写 115×115 就显示为 115×115。
  */
 export class ChapterMapHud {
-  constructor(scene) {
+  constructor(scene, { questService } = {}) {
     this.scene = scene;
+    this.questService = questService;
   }
 
   /** 刷新资料栏的生命、修为数值和填充长度（供储物袋使用物品后调用）。 */
@@ -44,11 +47,18 @@ export class ChapterMapHud {
     const avatarCenterY = 87;
     const avatarSize = 115;
     fixed(scene.add.circle(avatarCenterX - 12, avatarCenterY - 2, avatarSize / 2, 0xd1c5af));
-    // 头像 PNG 上方透明边缘较少，直接按图片中心摆放会让人物视觉上略微偏下。
-    // 向上补偿 3 像素后，人物可见区域会与圆形底色真正居中。
-    fixed(scene.add.image(avatarCenterX  - 12, avatarCenterY - 2, "chapter-hud-profile-avatar")
+    // 头像由创建角色时选择的完整立绘裁出面部与肩部，再用圆形蒙版收口；
+    // 因此玩家只维护一张立绘，也能得到效果图中的圆形地图头像。
+    const playerAvatarTexture = this.createPlayerAvatarTexture();
+    const playerAvatar = fixed(scene.add.image(avatarCenterX - 12, avatarCenterY - 2, playerAvatarTexture)
       .setOrigin(0.5, 0.5)
       .setDisplaySize(avatarSize, avatarSize));
+    const avatarMaskGraphic = fixed(scene.add.graphics());
+    avatarMaskGraphic.fillStyle(0xffffff, 1);
+    avatarMaskGraphic.fillCircle(avatarCenterX - 12, avatarCenterY - 2, avatarSize / 2);
+    playerAvatar.setMask(avatarMaskGraphic.createGeometryMask());
+    // 蒙版图形只用于裁切，不能作为实心圆盖在头像上方。
+    avatarMaskGraphic.setVisible(false);
     fixed(scene.add.image(18, 20, "chapter-hud-profile-brush")
       .setOrigin(0, 0)
       // 保持水墨底板原始 442×133 尺寸，绝不拉伸。
@@ -132,7 +142,7 @@ export class ChapterMapHud {
       // 功法、法术、法宝都是角色菜单的独立子页，顶部入口只指定默认页签。
       ["pixso-ui-gongfa", "功法", () => scene.openTechniqueBag()],
       ["pixso-ui-artifact", "法宝", () => scene.openArtifactBag()],
-      ["pixso-ui-save", "存档", () => scene.saveGameFromMenu()],
+      ["pixso-ui-save", "存档", () => scene.openSavePanel()],
       ["pixso-ui-settings", "设置", () => scene.openGameSettings()],
     ];
     const iconXs = [537, 690, 849, 1002, 1158, 1313];
@@ -146,7 +156,18 @@ export class ChapterMapHud {
       // 让“储物袋、法术、功法……”始终以图标 x 坐标为正中心。
       fixed(addText(scene, x, 138, label, 23, "#fff6dd", { strokeThickness: 5 }))
         .setOrigin(0.5);
-      icon.on("pointerdown", action);
+      icon.on("pointerdown", (_pointer, _localX, _localY, event) => {
+        // 角色菜单覆盖在地图 HUD 上时，底层图标仍可能收到同一次鼠标事件。
+        // 忽略该事件，避免它重新打开菜单并重置淡入动画，从而闪出地图。
+        if (scene.characterMenu?.visible) return;
+        // Phaser 会在游戏对象的 pointerdown 之后继续派发场景级 pointerdown。
+        // “存档”外层图标的 x 坐标恰好落在角色菜单“功法”页签范围内：若不停止
+        // 传播，同一次点击会先打开存档页，又立即被场景级输入切换成功法页。
+        // 这里只拦截负责“首次打开角色菜单”的那一次事件；菜单已经打开时仍由
+        // CharacterMenuPanel 正常接收后续点击，因此不会影响页签切换。
+        event?.stopPropagation();
+        action();
+      });
       // 只保留放大效果，不改变位置；缓动让放大、缩回都更柔和。
       // 每次进入或离开前先停止旧动画，快速移动鼠标时也不会连续跳动。
       icon.on("pointerover", () => {
@@ -288,23 +309,17 @@ export class ChapterMapHud {
     if (!isNpc || this.nearbyNpcId === object.id) return;
 
     this.nearbyNpcId = object.id;
-    if (isMerchant && this.scene.textures.exists("merchant-avatar")) {
-      this.nearbyAvatar.setTexture("merchant-avatar").setOrigin(0.5).setPosition(49, 86).setDisplaySize(60, 60);
-      return;
-    }
-    // NPC 编辑器中的头像优先；还没上传头像时，使用对话立绘作临时头像，
-    // 因此村长不会再错误显示为默认的青衣小人。
-    const avatarData = object.npcTemplate?.avatarData || object.npcTemplate?.portraitData || object.npcTemplate?.imageData || "";
+    // NPC 只维护立绘；附近修士头像从立绘上半部自动裁切。
+    const avatarData = object.npcTemplate?.portraitData || object.npcTemplate?.avatarData || object.npcTemplate?.imageData || "";
     if (!avatarData) {
-      this.nearbyAvatar.setTexture("player-idle-5dir", 0).setOrigin(0.5, 0.76).setPosition(49, 88).setScale(0.31);
+      this.nearbyAvatar.setTexture("player-idle-5dir", 0).setCrop().setOrigin(0.5, 0.76).setPosition(49, 88).setScale(0.31);
       return;
     }
-    const textureKey = `nearby-npc-avatar-${object.npcTemplate?.id || object.id}`;
+    const textureKey = `nearby-npc-avatar-rounded-${object.npcTemplate?.id || object.id}`;
     const applyAvatar = () => {
       if (!this.nearbyAvatar?.active || this.nearbyNpcId !== object.id) return;
-      const source = this.scene.textures.get(textureKey).getSourceImage();
-      const scale = Math.min(60 / source.width, 60 / source.height);
-      this.nearbyAvatar.setTexture(textureKey).setOrigin(0.5).setPosition(49, 88).setDisplaySize(source.width * scale, source.height * scale);
+      this.nearbyAvatar.setTexture(textureKey).setCrop()
+        .setOrigin(0.5).setPosition(49, 88).setDisplaySize(60, 60);
     };
     if (this.scene.textures.exists(textureKey)) applyAvatar();
     else {
@@ -313,14 +328,46 @@ export class ChapterMapHud {
       const image = new Image();
       image.onload = () => {
         if (this.scene.textures.exists(textureKey)) this.scene.textures.remove(textureKey);
-        this.scene.textures.addImage(textureKey, image);
+        const canvas = this.createRoundedAvatarCanvas(image, 60, 8);
+        this.scene.textures.addCanvas(textureKey, canvas);
         applyAvatar();
       };
       image.onerror = () => {
-        if (this.nearbyNpcId === object.id) this.nearbyAvatar.setTexture("player-idle-5dir", 0).setOrigin(0.5, 0.76).setScale(0.31);
+        if (this.nearbyNpcId === object.id) this.nearbyAvatar.setTexture("player-idle-5dir", 0).setCrop().setOrigin(0.5, 0.76).setScale(0.31);
       };
       image.src = avatarData;
     }
+  }
+
+  /**
+   * 将立绘等比铺满头像框，再裁成指定圆角矩形。
+   * 头像纹理本身就是 60×60，因此 Phaser 后续不会再把人物压扁或拉长。
+   */
+  createRoundedAvatarCanvas(image, size, radius) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    const r = Math.min(radius, size / 2);
+    context.beginPath();
+    context.moveTo(r, 0);
+    context.lineTo(size - r, 0);
+    context.quadraticCurveTo(size, 0, size, r);
+    context.lineTo(size, size - r);
+    context.quadraticCurveTo(size, size, size - r, size);
+    context.lineTo(r, size);
+    context.quadraticCurveTo(0, size, 0, size - r);
+    context.lineTo(0, r);
+    context.quadraticCurveTo(0, 0, r, 0);
+    context.closePath();
+    context.clip();
+
+    // 从原立绘顶部中央截取较小的正方形，形成只含头部与少量肩膀的大头照。
+    const cropSize = Math.min(image.width, image.height) * 0.55;
+    const sourceX = Math.max(0, (image.width - cropSize) / 2);
+    const sourceY = Math.min(Math.max(0, image.height * 0.04), Math.max(0, image.height - cropSize));
+    context.drawImage(image, sourceX, sourceY, cropSize, cropSize, 0, 0, size, size);
+    return canvas;
   }
 
   /**
@@ -556,13 +603,7 @@ export class ChapterMapHud {
       background.on("pointerout", () => background.setAlpha(1));
       return { background, text };
     };
-    this.taskGuideButton = makeActionButton(333, "开启引路", 0x37523a, 0x485443, "#d6e3cd", () => {
-      gameState.chapter.qingyunGuideEnabled = true;
-      saveFirstChapterProgress();
-      scene.updateQingyunQuestMarker?.();
-      this.closeTaskLog();
-      scene.updateQuestGuide?.();
-    });
+    this.taskGuideButton = makeActionButton(333, "开启引路", 0x37523a, 0x485443, "#d6e3cd", () => this.enableTaskGuide());
     this.taskAbandonButton = makeActionButton(481, "放弃任务", 0x523737, 0x544343, "#f3e0c0", () => this.abandonCurrentQuest());
 
     this.taskLog.add([
@@ -645,10 +686,9 @@ export class ChapterMapHud {
   }
 
   enableTaskGuide() {
-    if (gameState.chapter.qingyunInvestigation !== "active") return;
+    const result = this.questService?.setGuideEnabled(QINGYUN_INVESTIGATION_ID, true);
+    if (!result?.ok) return;
     playUiClickSound(this.scene);
-    gameState.chapter.qingyunGuideEnabled = true;
-    saveFirstChapterProgress();
     this.scene.updateQingyunQuestMarker?.();
     this.closeTaskLog();
     this.scene.updateQuestGuide?.();
@@ -657,12 +697,10 @@ export class ChapterMapHud {
   /** 切换“进行中 / 全部任务 / 已完成”时刷新列表与详情。 */
   renderTaskLog() {
     if (!this.taskLog) return;
-    const status = gameState.chapter.qingyunInvestigation;
-    const isActive = status === "active";
-    const isCompleted = status === "completed";
-    const hasTask = this.taskLogFilter === "all"
-      ? (isActive || isCompleted)
-      : (this.taskLogFilter === "active" ? isActive : isCompleted);
+    const journal = this.questService?.getJournalView(this.taskLogFilter) ?? { hasTask: false, quest: null };
+    const { hasTask, quest } = journal;
+    const isActive = Boolean(quest?.active);
+    const isCompleted = Boolean(quest?.completed);
     Object.entries(this.taskLogTabButtons).forEach(([id, button]) => {
       const selected = id === this.taskLogFilter;
       button.background.setFillStyle(selected ? 0x5f3d20 : 0x302416);
@@ -687,20 +725,48 @@ export class ChapterMapHud {
     this.taskAbandonButton.background.setVisible(isActive && hasTask);
     this.taskAbandonButton.text.setVisible(isActive && hasTask);
     if (!hasTask) return;
-    const badge = isCompleted ? "已完成" : "进行中";
-    this.taskLogCardBadgeText.setText(badge);
+    this.taskLogCardTitle.setText(quest.title);
+    this.taskLogMainTitle.setText(quest.title);
+    this.taskLogType.setText(quest.typeLabel);
+    this.taskLogCardBadgeText.setText(quest.badgeLabel);
     this.taskLogCardBadge.setFillStyle(isCompleted ? 0x37523a : 0x845e15);
-    this.taskLogDescription.setText(isCompleted ? "已寻得古玉，青云山异光真相初现。" : "调查青云山异光，拿到任务道具");
-    this.taskLogGoal.setText(isCompleted ? "任务已完成" : "前往山脚古潭的问道台");
-    this.taskLogReward.setText(isCompleted ? "古玉线索" : "暂未显示");
+    this.taskLogDescription.setText(quest.description);
+    this.taskLogGoal.setText(quest.goal);
+    this.taskLogReward.setText(quest.rewardLabel);
+    this.taskLogIssuerName.setText(quest.issuer);
+    this.taskLogRecipientName.setText(quest.recipient);
+  }
+
+  /**
+   * 从完整立绘中截取上半身，生成地图 HUD 专用的方形纹理。
+   * 每个角色仍只存一个 portraitId；本方法只负责显示层的裁切，不写入任何存档数据。
+   */
+  createPlayerAvatarTexture() {
+    const scene = this.scene;
+    const selectedPortrait = getPlayerPortrait(gameState.player.portraitId);
+    const sourceTexture = scene.textures.exists(selectedPortrait.textureKey)
+      ? scene.textures.get(selectedPortrait.textureKey)
+      : scene.textures.get("chapter-hud-profile-avatar");
+    const source = sourceTexture.getSourceImage();
+    const key = "chapter-hud-player-avatar-cropped";
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 192;
+    canvas.height = 192;
+    const context = canvas.getContext("2d");
+    const cropSize = Math.min(source.width * 0.82, source.height * 0.72);
+    const cropX = Math.max(0, (source.width - cropSize) / 2);
+    const cropY = Math.max(0, source.height * 0.04);
+    context.drawImage(source, cropX, cropY, cropSize, cropSize, 0, 0, canvas.width, canvas.height);
+    scene.textures.addCanvas(key, canvas);
+    return key;
   }
 
   abandonCurrentQuest() {
-    if (gameState.chapter.qingyunInvestigation !== "active") return;
+    const result = this.questService?.abandonQuest(QINGYUN_INVESTIGATION_ID);
+    if (!result?.ok) return;
     playUiClickSound(this.scene);
-    gameState.chapter.qingyunInvestigation = "not_started";
-    gameState.chapter.qingyunGuideEnabled = false;
-    saveFirstChapterProgress();
     this.updateQuestPanel();
     this.scene.updateQingyunQuestMarker?.();
     this.scene.updateQuestGuide?.();
@@ -714,11 +780,8 @@ export class ChapterMapHud {
 
   /** 根据村长委托的进度刷新右侧任务栏。 */
   updateQuestPanel() {
-    const status = gameState.chapter.qingyunInvestigation;
-    const hasActiveQuest = status === "active";
-    const text = hasActiveQuest
-      ? "主线：调查青云山异光\n目标：前往山脚古潭的问道台"
-      : "暂无进行中的任务";
+    const view = this.questService?.getHudView() ?? { hasActiveQuest: false, text: "暂无进行中的任务" };
+    const { hasActiveQuest, text } = view;
     // 没有进行中任务时，提示文字像效果图一样置于卡片中央；
     // 任务开启后恢复左对齐的任务目标排版。
     this.questText

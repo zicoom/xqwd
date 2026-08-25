@@ -42,6 +42,8 @@ const DEFAULT_MONSTERS = [
 /** 数值和数组统一整理，防止输入框填入空值导致战斗报错。 */
 export function normalizeMonster(monster = {}) {
   const toNumber = (value, fallback, min = 0, max = 999999) => Phaser.Math.Clamp(Number(value) || fallback, min, max);
+  const oldAppearance = monster.appearance && typeof monster.appearance === "object" ? monster.appearance : {};
+  const imageData = monster.imageData || oldAppearance.staticFallback || "";
   return {
     id: monster.id || `monster-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
     name: String(monster.name || "未命名怪物").trim() || "未命名怪物",
@@ -59,7 +61,15 @@ export function normalizeMonster(monster = {}) {
       cooldown: toNumber(skill.cooldown, 0, 0, 99),
     })) : [],
     drops: Array.isArray(monster.drops) ? monster.drops.filter(Boolean) : [],
-    imageData: monster.imageData || "",
+    imageData,
+    // 当前使用 staticFallback；animation 为未来序列帧、图集或其他动态立绘保留稳定接口。
+    appearance: {
+      mode: oldAppearance.mode === "animated" ? "animated" : "static",
+      staticFallback: imageData,
+      animation: oldAppearance.animation && typeof oldAppearance.animation === "object"
+        ? { ...oldAppearance.animation }
+        : null,
+    },
     soundUrl: monster.soundUrl || "",
   };
 }

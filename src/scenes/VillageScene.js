@@ -1,6 +1,12 @@
-import { gameState, saveFirstChapterProgress } from "../core/GameState.js";
+import {
+  createCurrentProgressSnapshot,
+  gameState,
+  restoreCurrentProgressSnapshot,
+  saveFirstChapterProgress,
+} from "../core/GameState.js";
 import { getMapObjects, MAP_OBJECT_TYPES } from "../core/MapContentStore.js";
 import { getMonsterTemplate } from "../core/MonsterStore.js";
+import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
 import { getItemTemplates } from "../core/ItemStore.js";
 import { getBuildingTemplate, getNpcTemplate } from "../core/WorldTemplateStore.js";
 import { SceneKeys } from "../core/SceneKeys.js";
@@ -10,6 +16,7 @@ import { CharacterMenuPanel } from "../ui/character/CharacterMenuPanel.js";
 import { XianxiaDialog } from "../ui/XianxiaDialog.js";
 import { configureFullHdScene, SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
+import { getPlayerPortrait } from "../core/PortraitCatalog.js";
 import { exportLocalGameData, importLocalGameDataFromFile } from "../core/LocalDataTransfer.js";
 import { ItemCatalog } from "../domain/items/ItemCatalog.js";
 import { TechniqueLoadoutService } from "../domain/techniques/TechniqueLoadoutService.js";
@@ -17,6 +24,14 @@ import { SpellService } from "../domain/spells/SpellService.js";
 import { ShopService } from "../domain/shop/ShopService.js";
 import { InventoryService } from "../domain/inventory/InventoryService.js";
 import { ArtifactLoadoutService } from "../domain/artifacts/ArtifactLoadoutService.js";
+import { CombatShortcutService } from "../domain/combat/CombatShortcutService.js";
+import { SaveArchiveService } from "../domain/save/SaveArchiveService.js";
+import { SaveArchiveRepository } from "../core/save/SaveArchiveRepository.js";
+import {
+  ChapterQuestService,
+  QINGYUN_INVESTIGATION_ID,
+  QUEST_EVENTS,
+} from "../domain/quests/ChapterQuestService.js";
 import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
 
 /**
@@ -58,6 +73,10 @@ export class VillageScene extends Phaser.Scene {
     });
     // 对话右侧使用主角专属半身立绘，不再复用左上角的小头像。
     this.load.image("player-dialogue-portrait", "./public/assets/images/characters/player-dialogue-portrait.png");
+    // 左上资料栏的头像从角色创建时选定的立绘生成，无须额外上传头像素材。
+    const selectedPortrait = getPlayerPortrait(gameState.player.portraitId);
+    // 纹理键包含立绘 ID。不同角色连续进入地图时不会复用上一位角色的缓存图片。
+    this.load.image(selectedPortrait.textureKey, selectedPortrait.imagePath);
     // 物品编辑器上传的自定义图标会随场景预加载；刷新或重新进入地图后，商店与储物袋立即显示新图。
     getItemTemplates().filter((item) => item.imageData).forEach((item) => {
       this.load.image(`item-custom-${item.id}`, item.imageData);
@@ -78,6 +97,8 @@ export class VillageScene extends Phaser.Scene {
     // 保持原图尺寸，避免浏览器缩放造成边框纹理模糊或比例失真。
     this.load.image("artifact-frame", "./public/assets/images/ui/artifact/artifact-frame.png");
     this.load.image("artifact-category-label", "./public/assets/images/ui/artifact/artifact-category-label.png");
+    // 法术页十键战斗快捷栏下方的 130×33 原始文字底签。
+    this.load.image("combat-shortcut-label", "./public/assets/images/ui/spells/combat-shortcut-label.png");
     // 游戏设置弹窗使用用户提供的新版深棕面板底图。
     this.load.image("game-settings-panel", "./public/assets/images/ui/chapter-map/settings-panel.png");
     // 编辑器放置的 NPC 和怪物暂时复用现有角色立绘。
@@ -144,6 +165,27 @@ export class VillageScene extends Phaser.Scene {
     this.shopService = new ShopService({ player: gameState.player, world: gameState.world, catalog: this.itemCatalog, save: saveFirstChapterProgress });
     this.inventoryService = new InventoryService({ player: gameState.player, save: saveFirstChapterProgress });
     this.artifactService = new ArtifactLoadoutService({ player: gameState.player, catalog: this.itemCatalog, save: saveFirstChapterProgress });
+    this.shortcutService = new CombatShortcutService({
+      player: gameState.player,
+      catalog: this.itemCatalog,
+      spellService: this.spellService,
+      save: saveFirstChapterProgress,
+    });
+    // 五个手动档位和自动存档间隔由纯领域服务管理；场景只注入浏览器仓库与快照方法。
+    this.saveArchiveService = new SaveArchiveService({
+      repository: new SaveArchiveRepository(),
+      profileId: `role-slot-${Number.isInteger(gameState.activeSaveSlot) ? gameState.activeSaveSlot : "unsaved"}`,
+      captureSnapshot: createCurrentProgressSnapshot,
+      restoreSnapshot: restoreCurrentProgressSnapshot,
+    });
+    // 章节任务规则集中在纯 JavaScript 领域服务中；场景只负责装配并报告地图事件。
+    this.questService = new ChapterQuestService({
+      chapter: gameState.chapter,
+      player: gameState.player,
+      save: saveFirstChapterProgress,
+    });
+    // 旧版本可能留下“进行中却已有古玉”等矛盾状态，只在装配阶段显式修复一次。
+    this.questService.reconcileLegacyState();
     this.merchantPanel = new MerchantPanel({ scene: this, shopService: this.shopService, save: saveFirstChapterProgress });
     this.characterMenu = new CharacterMenuPanel(this, {
       catalog: this.itemCatalog,
@@ -151,6 +193,8 @@ export class VillageScene extends Phaser.Scene {
       techniqueService: this.techniqueService,
       spellService: this.spellService,
       artifactService: this.artifactService,
+      shortcutService: this.shortcutService,
+      saveArchiveService: this.saveArchiveService,
     });
     // 大地图常驻一段轻柔的修仙纯音乐。浏览器若刚刷新而尚未允许播放，
     // 会在玩家第一次点击或按键时自动开始。
@@ -255,16 +299,10 @@ export class VillageScene extends Phaser.Scene {
     this.createNearbyNpcProfilePanel();
 
     this.createHud();
-    // 旧版本曾出现“任务仍在进行中，但古玉已找到”的矛盾存档。
-    // 这种情况下玩家已经重新接到委托，因此自动恢复古潭事件，避免到达地点却没有任何反应。
-    if (gameState.chapter.qingyunInvestigation === "active" && gameState.chapter.ancientJadeFound) {
-      gameState.chapter.ancientJadeFound = false;
-      gameState.player.hasJade = false;
-      saveFirstChapterProgress();
-    }
     this.updateQingyunQuestMarker();
-    // 每两秒自动保存一次位置。比每一帧写本地存储更省性能，也能避免刷新网页回到旧坐标。
-    this.autoSaveElapsed = 0;
+    // 坐标仍每两秒更新到内存；真正写入浏览器则按玩家选择的 5/10/15/30 分钟执行。
+    this.positionRememberElapsed = 0;
+    this.autoSaveCheckElapsed = 0;
     this.refreshNearbyMapTiles();
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys("W,A,S,D,SPACE,E,ESC,ONE,TWO,THREE,FOUR");
@@ -384,7 +422,7 @@ export class VillageScene extends Phaser.Scene {
 
   createHud() {
     // 界面由独立文件 ChapterMapHud 负责，地图场景不再混入大量排版代码。
-    this.chapterMapHud = new ChapterMapHud(this);
+    this.chapterMapHud = new ChapterMapHud(this, { questService: this.questService });
     this.chapterMapHud.create();
     // 保留以下引用，兼容地图场景已有的附近对象检测逻辑。
     this.nearbyNameText = this.chapterMapHud.nearbyNameText;
@@ -643,6 +681,11 @@ export class VillageScene extends Phaser.Scene {
   /** 法术是角色菜单的独立子页，不复用功能说明弹窗。 */
   openSpellPanel() {
     this.characterMenu.open("法术");
+  }
+
+  /** 顶部“存档”入口打开独立五档存档页，不再把点击直接当作一次无提示保存。 */
+  openSavePanel() {
+    this.characterMenu.open("存档");
   }
 
   closeStorageBag() {
@@ -936,14 +979,24 @@ export class VillageScene extends Phaser.Scene {
         portrait = this.add.image(0, 0, "map-monster-portrait").setOrigin(0.5, 0.87).setScale(0.34).setTint(0xe9b4b4);
         // 怪物编辑器上传的是 Base64 图片数据。首次进入地图时异步注册纹理，
         // 注册完成后直接替换当前立绘，不需要玩家重新进入场景。
-        if (object.battle?.imageData) {
-          const textureKey = `map-monster-custom-${object.battle.id}`;
+        const appearance = resolveMonsterAppearance(object.battle);
+        if (appearance.staticImageData) {
+          const textureKey = getMonsterAppearanceTextureKey(object.battle, "map-monster-custom");
+          const applyMonsterPortrait = () => {
+            if (!portrait.active || !this.textures.exists(textureKey)) return;
+            const source = this.textures.get(textureKey).getSourceImage();
+            const scale = Math.min(105 / source.width, 130 / source.height, 1);
+            portrait.setTexture(textureKey).clearTint().setDisplaySize(source.width * scale, source.height * scale);
+          };
           if (this.textures.exists(textureKey)) {
-            portrait.setTexture(textureKey).clearTint().setDisplaySize(105, 130);
+            applyMonsterPortrait();
           } else {
-            this.textures.addBase64(textureKey, object.battle.imageData, () => {
-              if (portrait.active) portrait.setTexture(textureKey).clearTint().setDisplaySize(105, 130);
-            });
+            const image = new Image();
+            image.onload = () => {
+              if (!this.textures.exists(textureKey)) this.textures.addImage(textureKey, image);
+              applyMonsterPortrait();
+            };
+            image.src = appearance.staticImageData;
           }
         }
       } else {
@@ -971,11 +1024,18 @@ export class VillageScene extends Phaser.Scene {
   }
 
   update(_, delta) {
-    this.autoSaveElapsed += delta;
-    if (this.autoSaveElapsed >= 2000) {
-      this.autoSaveElapsed = 0;
+    this.positionRememberElapsed += delta;
+    if (this.positionRememberElapsed >= 2000) {
+      this.positionRememberElapsed = 0;
       this.rememberPlayerPosition();
-      saveFirstChapterProgress();
+    }
+    this.autoSaveCheckElapsed += delta;
+    if (this.autoSaveCheckElapsed >= 1000) {
+      this.autoSaveCheckElapsed = 0;
+      if (this.saveArchiveService.shouldAutoSave()) {
+        this.rememberPlayerPosition();
+        if (saveFirstChapterProgress()) this.saveArchiveService.markAutoSaved();
+      }
     }
     if (this.npcProfilePanel?.visible) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.closeNearbyNpcProfile();
@@ -1035,13 +1095,13 @@ export class VillageScene extends Phaser.Scene {
     this.updateQuestGuide();
     this.updateNearbyInteraction();
     const jadeDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.jadePosition.x, this.jadePosition.y);
-    const questActive = gameState.chapter.qingyunInvestigation === "active";
-    if (questActive && !gameState.chapter.ancientJadeFound && jadeDistance < 300) {
+    const canDiscoverJade = this.questService.canDiscoverAncientJade();
+    if (canDiscoverJade && jadeDistance < 300) {
       this.operationHint.setText("古潭问道台就在附近，继续靠近中央玉光。 ");
     }
-    if (questActive && !gameState.chapter.ancientJadeFound && jadeDistance < 150) {
+    if (canDiscoverJade && jadeDistance < 150) {
       this.startJadeStory();
-    } else if (gameState.chapter.qingyunInvestigation === "completed" && gameState.chapter.ancientJadeFound && jadeDistance < 75) {
+    } else if (this.questService.canRepeatJadeInteraction() && jadeDistance < 75) {
       // 古玉剧情完成后，它仍是永久测试入口，但不能直接强制开战：
       // 每次按 E 都先打开对话，由玩家自行选择战斗或返回地图。
       this.operationHint.setText("奇异玉光：按 E 查看玉光（可在对话中选择战斗或返回）。");
@@ -1333,26 +1393,17 @@ export class VillageScene extends Phaser.Scene {
 
   /** 村长的“我现在就出发”选择会开启主线、刷新任务栏并显示古潭任务地点。 */
   acceptQingyunInvestigation() {
-    // 即使任务已经是进行中，再次确认委托也重新给出提示，避免玩家以为没有接到。
-    // 如果玩家之前已完成过测试战斗，再次领取时要恢复古潭事件；否则任务会显示进行中却永远不触发。
-    if (gameState.chapter.ancientJadeFound) {
-      gameState.chapter.ancientJadeFound = false;
-      gameState.player.hasJade = false;
-    }
-    gameState.chapter.qingyunInvestigation = "active";
-    // 接取只写入任务日志；玩家在日志点“开启引路”后才出现地图箭头与任务地点。
-    gameState.chapter.qingyunGuideEnabled = false;
+    const result = this.questService.acceptQuest(QINGYUN_INVESTIGATION_ID);
+    if (!result.ok) return result;
     this.chapterMapHud?.updateQuestPanel();
     this.updateQingyunQuestMarker();
     this.showQuestAcceptedNotice();
     this.updateQuestGuide();
-    saveFirstChapterProgress();
+    return result;
   }
 
   updateQingyunQuestMarker() {
-    const visible = gameState.chapter.qingyunInvestigation === "active"
-      && gameState.chapter.qingyunGuideEnabled
-      && !gameState.chapter.ancientJadeFound;
+    const visible = this.questService.shouldShowTargetMarker(QINGYUN_INVESTIGATION_ID);
     this.jadeMarker?.forEach((display) => display.setVisible(visible));
   }
 
@@ -1415,8 +1466,7 @@ export class VillageScene extends Phaser.Scene {
   }
 
   updateQuestGuide() {
-    // 任务栏显示为进行中，就始终保持导航；避免存档中旧的古玉标记把箭头误判隐藏。
-    const active = gameState.chapter.qingyunInvestigation === "active" && gameState.chapter.qingyunGuideEnabled;
+    const active = this.questService.shouldShowGuide(QINGYUN_INVESTIGATION_ID);
     if (!active || !this.questGuideArrow || !this.player) {
       this.setQuestGuideVisible(false);
       return;
@@ -1440,11 +1490,38 @@ export class VillageScene extends Phaser.Scene {
   }
 
   movePlayer(dx, dy) {
-    this.player.x = Phaser.Math.Clamp(this.player.x + dx, 50, this.worldSize.width - 50);
-    this.player.y = Phaser.Math.Clamp(this.player.y + dy, 110, this.worldSize.height - 80);
+    const nextX = Phaser.Math.Clamp(this.player.x + dx, 50, this.worldSize.width - 50);
+    const nextY = Phaser.Math.Clamp(this.player.y + dy, 110, this.worldSize.height - 80);
+    // 建筑模板的碰撞顶点由编辑器按“图片相对坐标”保存。地图实例只带模板 ID，
+    // 因此更新模板后，已摆放建筑无需重放也会立即使用新的碰撞范围。
+    if (this.isPositionBlockedByBuilding(nextX, nextY)) {
+      this.target = null;
+      return;
+    }
+    this.player.x = nextX;
+    this.player.y = nextY;
     // 实时更新内存位置；真正写入浏览器存档由手动保存、进入战斗和退出时完成。
     this.rememberPlayerPosition();
     this.updatePlayerDirection(dx, dy);
+  }
+
+  /** 判断角色脚下坐标是否落入任一启用的建筑多边形。 */
+  isPositionBlockedByBuilding(x, y) {
+    if (!this.editorActors) return false;
+    for (const { object } of this.editorActors.values()) {
+      const template = object.type === "building" ? object.buildingTemplate : null;
+      const collision = template?.collision;
+      if (!collision?.enabled || !Array.isArray(collision.points) || collision.points.length < 3) continue;
+      const width = Number(template.display?.width) || 256;
+      const height = Number(template.display?.height) || 256;
+      const top = template.display?.anchor === "center" ? object.y - height / 2 : object.y - height;
+      const vertices = collision.points.map((point) => new Phaser.Geom.Point(
+        object.x + (Number(point.x) - 0.5) * width,
+        top + Number(point.y) * height,
+      ));
+      if (Phaser.Geom.Polygon.Contains(new Phaser.Geom.Polygon(vertices), x, y)) return true;
+    }
+    return false;
   }
 
   /** 把当前角色脚下坐标记录到全局状态，供战斗返回和存档恢复使用。 */
@@ -1487,14 +1564,15 @@ export class VillageScene extends Phaser.Scene {
 
   startJadeStory() {
     this.rememberPlayerPosition();
-    gameState.chapter.ancientJadeFound = true;
-    gameState.player.hasJade = true;
-    gameState.chapter.qingyunInvestigation = "completed";
-    gameState.chapter.qingyunGuideEnabled = false;
+    // 地图只报告“找到古玉”；能否推进、完成与发奖全部由任务领域服务判断。
+    const result = this.questService.advanceQuest(
+      QINGYUN_INVESTIGATION_ID,
+      QUEST_EVENTS.ANCIENT_JADE_FOUND,
+    );
+    if (!result.ok) return;
     this.chapterMapHud?.updateQuestPanel();
     this.updateQingyunQuestMarker();
-    // 发现古玉是第一章的重要节点，立刻保存，刷新页面后不会丢失该进度。
-    saveFirstChapterProgress();
+    this.updateQuestGuide();
     this.openDialogue([
       "你在山脚拾起一枚温润古玉。古玉忽然发出微光，远处传来劫修的脚步声……",
       "提示：第一章原型中，可用鼠标点击普通攻击、术法或防御。",

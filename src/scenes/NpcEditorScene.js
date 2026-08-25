@@ -2,6 +2,7 @@ import { getNpcTemplates, normalizeNpc, saveNpcTemplates } from "../core/WorldTe
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
 import { addText } from "../utils/UiHelpers.js";
+import { optimiseImageForStorage, prepareImageForStorage } from "../utils/ImageStorage.js";
 
 const REALM_OPTIONS = [
   "", ...["炼气", "筑基", "金丹", "元婴", "化神", "炼虚", "合体", "大乘", "渡劫"]
@@ -266,15 +267,15 @@ export class NpcEditorScene extends Phaser.Scene {
     const profile = item.profile;
     this.sectionTitle("立绘与头像");
     this.roundedBox(894, 139, 224, 306, 0x1d1d1c, 0x4b4945, 12, 2);
-    // 立绘与头像是两套独立资料：立绘用于对话，头像用于列表、地图默认头像。
+    // NPC 只维护一张立绘；列表与地图头像都从立绘自动裁切。
     this.drawPortrait(item, 1006, 295, 205, false, "portrait");
     this.text(1006, 468, "立绘(对话时显示)", 17, "#aaa39b", { strokeThickness: 1 }).setOrigin(0.5);
     this.track(this.add.circle(1254, 221, 48, 0x1c1c1c).setStrokeStyle(2, 0x66625d));
     // 头像显示尺寸与右侧外圆直径一致（96px）。
     this.drawPortrait(item, 1254, 219, 96, true, "avatar");
-    this.text(1254, 275, "头像", 17, "#aaa39b", { strokeThickness: 1 }).setOrigin(0.5);
+    this.text(1254, 275, "立绘自动裁切头像", 15, "#aaa39b", { strokeThickness: 1 }).setOrigin(0.5);
     this.button(1148, 335, 220, "上传立绘", () => this.pickPortrait(), { height: 45, fill: 0x9d8248, hover: 0xb09255, stroke: 0x9d8248 });
-    this.button(1148, 397, 220, "上传头像", () => this.pickAvatar(), { height: 45, fill: 0x383838, hover: 0x4c4c4c, stroke: 0x383838, color: "#b6b1a9" });
+    this.text(1258, 407, "上传一次立绘即可同步全部头像", 15, "#8f8a83", { strokeThickness: 1 }).setOrigin(0.5);
 
     // Pixso 稿中的十种灵根：直接在对应数字框填写，不再弹出浏览器输入窗口。
     this.text(600, 485, "灵根属性", 16, "#f0ce57", { strokeThickness: 2 }).setOrigin(0.5);
@@ -549,24 +550,29 @@ export class NpcEditorScene extends Phaser.Scene {
   }
 
   drawPortrait(item, x, y, size, compact, type = "portrait") {
-    const imageData = type === "avatar" ? item.avatarData : item.portraitData;
+    const imageData = item.portraitData || item.avatarData || item.imageData || "";
     // 空白新建 NPC 不显示系统示例人物，等待用户自行上传头像和立绘。
     if (!imageData && item.isNew) return;
-    const customKey = `npc-manage-${type}-${item.id}`;
-    if (imageData && !this.textures.exists(customKey)) this.loadNpcTexture(item, type, imageData);
+    const textureType = "portrait";
+    const customKey = `npc-manage-${textureType}-${item.id}`;
+    if (imageData && !this.textures.exists(customKey)) this.loadNpcTexture(item, textureType, imageData);
     const textureKey = imageData && this.textures.exists(customKey) ? customKey : "npc-editor-default";
     const portrait = this.track(this.add.image(x, y, textureKey, textureKey === "npc-editor-default" ? 0 : undefined));
     // 按原比例缩放：立绘贴近大框下沿并尽量填满；头像居中填满圆框。
     // `npc-editor-default` 是精灵表，必须读取当前帧的实际尺寸；
     // 上传的普通图片在这里同样会取得自己的原始宽高。
     const source = { width: portrait.frame.width, height: portrait.frame.height };
-    const maxWidth = compact ? size : size;
+    const maxWidth = size;
     const maxHeight = compact ? size : size * 1.46;
-    const scale = Math.min(maxWidth / source.width, maxHeight / source.height);
-    portrait.setDisplaySize(source.width * scale, source.height * scale);
     if (compact) {
-      portrait.setOrigin(0.5, 0.5);
+      // 头像使用立绘顶部中央约 55% 宽度，只保留头部和少量肩膀。
+      const cropSize = Math.min(source.width, source.height) * 0.55;
+      const cropX = Math.max(0, (source.width - cropSize) / 2);
+      const cropY = Math.min(Math.max(0, source.height * 0.04), Math.max(0, source.height - cropSize));
+      portrait.setCrop(cropX, cropY, cropSize, cropSize).setDisplaySize(size, size).setOrigin(0.5, 0.5);
     } else {
+      const scale = Math.min(maxWidth / source.width, maxHeight / source.height);
+      portrait.setDisplaySize(source.width * scale, source.height * scale);
       // 效果稿的立绘落在框底，留很小的下边距，而不是悬在框中央。
       portrait.setOrigin(0.5, 1).setY(y + maxHeight / 2 - 4);
     }
@@ -606,11 +612,8 @@ export class NpcEditorScene extends Phaser.Scene {
   }
 
   /** 上传立绘：只用于对话、预览等显示半身人物的位置。 */
-  pickPortrait() { this.pickFile((data) => this.setNpcImage("portrait", data)); }
-
-  /** 上传头像：用于左侧 NPC 列表与地图 NPC 的默认头像，绝不会覆盖立绘。 */
-  pickAvatar() {
-    this.pickFile((data) => this.setNpcImage("avatar", data));
+  pickPortrait() {
+    this.pickFile((data) => this.setNpcImage("portrait", data), { maxSide: 768, quality: 0.84 });
   }
 
   /**
@@ -619,13 +622,10 @@ export class NpcEditorScene extends Phaser.Scene {
    */
   setNpcImage(type, data) {
     const item = this.selected;
-    if (type === "portrait") item.portraitData = data;
-    if (type === "avatar") {
-      item.avatarData = data;
-      // 地图编辑器仍读取 imageData；这里保持它与头像同步。
-      item.imageData = data;
-    }
-    this.loadNpcTexture(item, type, data, true);
+    item.portraitData = data;
+    item.avatarData = data;
+    item.imageData = data;
+    this.loadNpcTexture(item, "portrait", data, true);
   }
 
   /**
@@ -651,7 +651,7 @@ export class NpcEditorScene extends Phaser.Scene {
     };
     image.src = data;
   }
-  pickFile(done) {
+  pickFile(done, options) {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/png,image/jpeg,image/webp";
@@ -661,18 +661,53 @@ export class NpcEditorScene extends Phaser.Scene {
       const file = input.files?.[0];
       input.remove();
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => done(String(reader.result));
-      reader.readAsDataURL(file);
+      this.showNotice("正在转换为 WebP…");
+      prepareImageForStorage(file, options)
+        .then((imageData) => {
+          done(imageData);
+          this.showNotice("图片已转换为 WebP，请点击保存全部");
+        })
+        .catch(() => this.showNotice("图片处理失败，请换一张 PNG、JPG 或 WEBP 图片"));
     };
     input.click();
   }
 
-  save() {
+  async save() {
+    if (this.isSaving) return;
+    this.isSaving = true;
     this.commitAllDomInputs();
-    this.items = this.items.map(normalizeNpc);
-    saveNpcTemplates(this.items);
-    this.showNotice("NPC资料已保存");
+    const prepared = this.items.map(normalizeNpc);
+    this.showNotice("正在整理图片并保存…");
+    const savingOptions = [
+      { portrait: 768, avatar: 384, map: 512, quality: 0.82 },
+      { portrait: 640, avatar: 320, map: 448, quality: 0.76 },
+      { portrait: 512, avatar: 256, map: 384, quality: 0.7 },
+    ];
+    for (const option of savingOptions) {
+      try {
+        const compressed = await Promise.all(prepared.map(async (item) => {
+          const portraitData = item.portraitData
+            ? await optimiseImageForStorage(item.portraitData, option.portrait, option.quality)
+            : "";
+          const avatarData = portraitData;
+          const mapPortraitData = item.mapPortraitData
+            ? await optimiseImageForStorage(item.mapPortraitData, option.map, option.quality)
+            : "";
+          return { ...item, portraitData, avatarData, mapPortraitData, imageData: avatarData };
+        }));
+        if (saveNpcTemplates(compressed)) {
+          this.items = compressed;
+          this.isSaving = false;
+          this.refresh();
+          this.showNotice("NPC资料与 WebP 图片已保存");
+          return;
+        }
+      } catch (error) {
+        // 当前清晰度保存失败后继续尝试更轻的图片档位。
+      }
+    }
+    this.isSaving = false;
+    this.showNotice("保存失败：浏览器本地空间不足，请先导出资料备份");
   }
 
   /** 保存前强制提交所有框内的文字，包含仍在编辑、尚未失焦的灵根数值。 */

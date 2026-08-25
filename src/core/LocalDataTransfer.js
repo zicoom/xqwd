@@ -70,6 +70,56 @@ export function exportLocalGameData() {
 }
 
 /**
+ * 打开系统 JSON 文件选择窗口，并可靠地区分“已选文件”和“取消”。
+ *
+ * Windows 的 Chrome 可能先让网页恢复 focus，过一小段时间才触发 input.change。
+ * 因此 focus 只能作为旧浏览器的延迟兜底，不能立刻判定取消；现代浏览器则直接
+ * 使用 input.cancel 事件。参数可注入是为了在纯 JavaScript 测试中复现事件顺序。
+ */
+export function pickLocalBackupFile({
+  documentObject = document,
+  windowObject = window,
+  focusFallbackDelay = 500,
+} = {}) {
+  const input = documentObject.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.style.display = "none";
+  documentObject.body.appendChild(input);
+
+  return new Promise((resolve) => {
+    let finished = false;
+    let focusTimer = null;
+
+    const cleanup = () => {
+      if (focusTimer !== null) windowObject.clearTimeout(focusTimer);
+      input.removeEventListener("change", onChange);
+      input.removeEventListener("cancel", onCancel);
+      windowObject.removeEventListener("focus", onWindowFocus);
+      input.remove();
+    };
+    const finish = (file) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve(file || null);
+    };
+    const onChange = () => finish(input.files?.[0] || null);
+    const onCancel = () => finish(null);
+    const onWindowFocus = () => {
+      // focus 往往早于 change；留出时间让系统文件窗口把选择结果写回 input.files。
+      if (focusTimer !== null) windowObject.clearTimeout(focusTimer);
+      focusTimer = windowObject.setTimeout(() => finish(input.files?.[0] || null), focusFallbackDelay);
+    };
+
+    input.addEventListener("change", onChange);
+    input.addEventListener("cancel", onCancel);
+    windowObject.addEventListener("focus", onWindowFocus);
+    input.click();
+  });
+}
+
+/**
  * 让玩家选择一份“玄穹问道数据备份”JSON 文件。
  *
  * 导入会替换本机现有的游戏资料，因此必须由玩家在浏览器确认一次；确认后刷新网页，
@@ -77,30 +127,8 @@ export function exportLocalGameData() {
  * @returns {Promise<{success: boolean, cancelled?: boolean, count?: number, message?: string}>}
  */
 export async function importLocalGameDataFromFile() {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".json,application/json";
-  input.style.display = "none";
-  document.body.appendChild(input);
-
   try {
-    const selectedFile = await new Promise((resolve) => {
-      let finished = false;
-      const finish = (file) => {
-        if (finished) return;
-        finished = true;
-        window.removeEventListener("focus", onWindowFocus);
-        resolve(file);
-      };
-      const onWindowFocus = () => {
-        // 用户在系统文件选择框点击“取消”时，部分浏览器不会触发 change。
-        // 回到网页后稍等一帧再检查，可以把这种情况正常视作取消而不是卡住设置界面。
-        window.setTimeout(() => finish(input.files?.[0] || null), 0);
-      };
-      input.addEventListener("change", () => finish(input.files?.[0] || null), { once: true });
-      window.addEventListener("focus", onWindowFocus, { once: true });
-      input.click();
-    });
+    const selectedFile = await pickLocalBackupFile();
     if (!selectedFile) return { success: false, cancelled: true };
 
     let backup;
@@ -139,9 +167,9 @@ export async function importLocalGameDataFromFile() {
       console.warn("游戏数据导入失败：", error);
       return { success: false, message: "导入失败，本机原有资料已恢复；请检查浏览器储存空间。" };
     }
-
     return { success: true, count };
-  } finally {
-    input.remove();
+  } catch (error) {
+    console.warn("游戏数据文件选择失败：", error);
+    return { success: false, message: "浏览器无法读取所选文件，请检查文件访问权限后重试。" };
   }
 }

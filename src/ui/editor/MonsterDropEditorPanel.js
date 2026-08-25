@@ -1,9 +1,14 @@
-import { addButton, addText } from "../../utils/UiHelpers.js";
+import { addText, playUiClickSound } from "../../utils/UiHelpers.js";
 
-const OPTION_PAGE_SIZE = 8;
-const DROP_PAGE_SIZE = 7;
+const OPTION_PAGE_SIZE = 6;
+const DROP_PAGE_SIZE = 6;
 
-/** 怪物掉落编辑弹窗；只处理选择、数量和页面交互，不读取存档或解释奖励规则。 */
+/**
+ * 怪物掉落编辑器。
+ *
+ * 这是独立的复杂编辑面板：只负责目录选择、数量调整、分页和结果回传；奖励解析、
+ * 去重和旧数据兼容仍由 RewardCatalog 负责，避免 UI 层承担任何掉落规则。
+ */
 export class MonsterDropEditorPanel {
   constructor({ scene, rewardCatalog }) {
     this.scene = scene;
@@ -17,32 +22,101 @@ export class MonsterDropEditorPanel {
     if (this.panel) return;
     const scene = this.scene;
     this.panel = scene.add.container(0, 0).setDepth(3000).setVisible(false);
-    const shade = scene.add.rectangle(0, 0, 1920, 1080, 0x050914, 0.78).setOrigin(0).setInteractive();
-    const card = scene.add.rectangle(960, 540, 1580, 900, 0x17223a, 1).setStrokeStyle(4, 0xc49a51);
-    const divider = scene.add.rectangle(960, 540, 2, 700, 0x506b9d, 0.8);
-    const title = addText(scene, 960, 125, "怪物掉落配置", 38, "#ffe4a1", { origin: 0.5 });
-    const subtitle = addText(scene, 960, 174, "从统一目录选择奖励；旧版未登记文本可保留或删除，但不能新增", 18, "#b9cde0", { origin: 0.5 });
-    const leftTitle = addText(scene, 545, 215, "可选奖励", 25, "#f5d38a", { origin: 0.5 });
-    const rightTitle = addText(scene, 1370, 215, "当前掉落", 25, "#f5d38a", { origin: 0.5 });
-    this.panel.add([shade, card, divider, title, subtitle, leftTitle, rightTitle]);
+    const shade = scene.add.rectangle(960, 540, 1920, 1080, 0x080907, 0.78).setInteractive();
+    const shadow = scene.add.rectangle(970, 552, 1420, 820, 0x050403, 0.5);
+    const frame = scene.add.graphics();
+    this.drawFrame(frame, 250, 130, 1420, 820);
+    const title = this.centerText(960, 183, "怪物掉落配置", 38, "#f5d27a", 720);
+    const subtitle = this.centerText(960, 224, "从奖励目录选择掉落；数量会自动合并，同名旧数据可保留或删除。", 17, "#c9b99b", 920);
+    const titleRule = scene.add.rectangle(960, 254, 1120, 1, 0x8e6734, 0.9);
+    const leftPanel = scene.add.graphics();
+    this.drawContentPanel(leftPanel, 290, 284, 605, 520);
+    const rightPanel = scene.add.graphics();
+    this.drawContentPanel(rightPanel, 1025, 284, 605, 520);
+    const leftTitle = this.centerText(592, 311, "可选奖励", 24, "#f0ca6b", 360);
+    const rightTitle = this.centerText(1328, 311, "当前掉落", 24, "#f0ca6b", 360);
+    const leftHint = this.centerText(592, 342, "选择一项奖励，再设置数量后加入右侧。", 14, "#9e907b", 500);
+    const rightHint = this.centerText(1328, 342, "已加入的奖励会在怪物战斗结算时使用。", 14, "#9e907b", 500);
+    this.panel.add([shade, shadow, frame, title, subtitle, titleRule, leftPanel, rightPanel, leftTitle, rightTitle, leftHint, rightHint]);
 
     this.optionsLayer = scene.add.container(0, 0);
     this.dropsLayer = scene.add.container(0, 0);
     this.panel.add([this.optionsLayer, this.dropsLayer]);
 
-    this.selectedText = addText(scene, 535, 835, "尚未选择奖励", 18, "#dfe8f2", { origin: 0.5, wordWrap: { width: 560 } });
-    this.quantityText = addText(scene, 535, 887, "数量：1", 20, "#ffe4a1", { origin: 0.5 });
-    this.noticeText = addText(scene, 1370, 835, "", 17, "#e9b979", { origin: 0.5, wordWrap: { width: 650 }, align: "center" });
+    this.selectedText = this.centerText(592, 742, "尚未选择奖励", 16, "#e8ddc5", 490);
+    this.quantityText = this.centerText(592, 777, "数量  1", 19, "#f0ca6b", 140);
+    this.noticeText = this.centerText(1328, 742, "", 15, "#bde3b5", 480);
     this.panel.add([this.selectedText, this.quantityText, this.noticeText]);
 
-    [
-      addButton(scene, 350, 887, 70, "−", () => this.changePendingQuantity(-1), { height: 42, size: 25 }),
-      addButton(scene, 720, 887, 70, "+", () => this.changePendingQuantity(1), { height: 42, size: 25 }),
-      addButton(scene, 535, 945, 240, "加入当前掉落", () => this.addSelected(), { height: 48, size: 18 }),
-      addButton(scene, 1270, 945, 190, "取消", () => this.close(), { height: 48, size: 18 }),
-      addButton(scene, 1480, 945, 190, "应用掉落", () => this.apply(), { height: 48, size: 18 }),
-      addButton(scene, 1700, 120, 58, "×", () => this.close(), { height: 48, size: 28 }),
-    ].forEach((button) => this.panel.add(button));
+    this.addButton(510, 777, 54, 38, "−", () => this.changePendingQuantity(-1), { size: 22, variant: "secondary" });
+    this.addButton(674, 777, 54, 38, "＋", () => this.changePendingQuantity(1), { size: 20, variant: "secondary" });
+    this.addButton(592, 838, 270, 44, "加入掉落列表", () => this.addSelected(), { variant: "utility" });
+    this.addButton(1428, 885, 170, 46, "应用掉落", () => this.apply(), { variant: "primary", size: 18 });
+    this.addButton(1228, 885, 170, 46, "取消", () => this.close(), { variant: "secondary", size: 18 });
+    this.addButton(1612, 174, 44, 40, "×", () => this.close(), { size: 26, variant: "danger" });
+  }
+
+  drawFrame(graphics, x, y, width, height) {
+    graphics.fillStyle(0x21160f, 0.99);
+    graphics.fillRoundedRect(x, y, width, height, 14);
+    graphics.lineStyle(3, 0xc79a4b, 1);
+    graphics.strokeRoundedRect(x, y, width, height, 14);
+    graphics.fillStyle(0x302016, 0.45);
+    graphics.fillRoundedRect(x + 10, y + 10, width - 20, height - 20, 10);
+    graphics.lineStyle(1, 0x7b572d, 0.95);
+    graphics.strokeRoundedRect(x + 10, y + 10, width - 20, height - 20, 10);
+    // 简洁四角金线，使弹窗与游戏内其他木质界面保持同一视觉语言。
+    const inset = 25; const length = 28;
+    graphics.lineStyle(2, 0xdfba66, 0.85);
+    [[x + inset, y + inset, 1, 1], [x + width - inset, y + inset, -1, 1], [x + inset, y + height - inset, 1, -1], [x + width - inset, y + height - inset, -1, -1]]
+      .forEach(([cornerX, cornerY, horizontal, vertical]) => {
+        graphics.lineBetween(cornerX, cornerY, cornerX + horizontal * length, cornerY);
+        graphics.lineBetween(cornerX, cornerY, cornerX, cornerY + vertical * length);
+      });
+  }
+
+  drawContentPanel(graphics, x, y, width, height) {
+    graphics.fillStyle(0x181613, 0.98);
+    graphics.fillRoundedRect(x, y, width, height, 9);
+    graphics.lineStyle(1.5, 0x594634, 1);
+    graphics.strokeRoundedRect(x, y, width, height, 9);
+    graphics.lineStyle(1, 0x8a6537, 0.65);
+    graphics.lineBetween(x + 28, y + 79, x + width - 28, y + 79);
+  }
+
+  centerText(x, y, value, size, color, width) {
+    const text = addText(this.scene, x - width / 2, y, value, size, color, {
+      fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
+      stroke: "#17100b",
+      strokeThickness: 1,
+      align: "center",
+      wordWrap: { width },
+    });
+    text.setFixedSize(width, 0).setOrigin(0, 0.5);
+    return text;
+  }
+
+  addButton(x, y, width, height, label, callback, options = {}) {
+    const colors = {
+      primary: { fill: 0x365d39, hover: 0x477849, stroke: 0x6d9e6e },
+      secondary: { fill: 0x3b414a, hover: 0x525b68, stroke: 0x6d7683 },
+      utility: { fill: 0x614622, hover: 0x806033, stroke: 0xc69d54 },
+      danger: { fill: 0x563135, hover: 0x704146, stroke: 0xa66d68 },
+    }[options.variant ?? "utility"];
+    const background = this.scene.add.rectangle(x, y, width, height, colors.fill)
+      .setStrokeStyle(1.5, colors.stroke)
+      .setInteractive({ useHandCursor: true });
+    const text = addText(this.scene, x, y, label, options.size ?? 16, "#fff0c7", {
+      fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
+      stroke: "#1b130d",
+      strokeThickness: 1,
+      align: "center",
+    }).setOrigin(0.5);
+    background.on("pointerover", () => background.setFillStyle(colors.hover));
+    background.on("pointerout", () => background.setFillStyle(colors.fill));
+    background.on("pointerdown", () => { playUiClickSound(this.scene); callback(); });
+    this.panel.add([background, text]);
+    return background;
   }
 
   open({ drops = [], onApply = () => {} } = {}) {
@@ -73,59 +147,67 @@ export class MonsterDropEditorPanel {
     this.renderDrops();
     const selected = this.options.find((reward) => reward.id === this.selectedRewardId);
     this.selectedText.setText(selected ? `已选：${selected.name}（${selected.typeLabel}）` : "尚未选择奖励");
-    this.quantityText.setText(`数量：${this.pendingQuantity}`);
+    this.quantityText.setText(`数量  ${this.pendingQuantity}`);
   }
 
   renderOptions() {
     this.optionsLayer.removeAll(true);
     const pageCount = Math.max(1, Math.ceil(this.options.length / OPTION_PAGE_SIZE));
     this.optionPage = Math.max(0, Math.min(this.optionPage, pageCount - 1));
-    this.options.slice(this.optionPage * OPTION_PAGE_SIZE, (this.optionPage + 1) * OPTION_PAGE_SIZE)
-      .forEach((reward, index) => {
-        const y = 270 + index * 66;
-        const selected = reward.id === this.selectedRewardId;
-        const card = this.scene.add.rectangle(545, y, 680, 54, selected ? 0x4e644d : 0x202d46, 1)
-          .setStrokeStyle(2, selected ? 0xe6bb69 : 0x486081)
-          .setInteractive({ useHandCursor: true });
-        const name = addText(this.scene, 225, y - 13, reward.name, 18, selected ? "#ffe6a7" : "#f2f5fc");
-        const type = addText(this.scene, 225, y + 11, reward.typeLabel, 13, "#aebfd3");
-        card.on("pointerdown", () => { this.selectedRewardId = reward.id; this.render(); });
-        this.optionsLayer.add([card, name, type]);
-      });
-    this.addLayerButton(this.optionsLayer, 360, 790, 110, "上一页", () => { this.optionPage -= 1; this.renderOptions(); });
-    this.addLayerButton(this.optionsLayer, 730, 790, 110, "下一页", () => { this.optionPage += 1; this.renderOptions(); });
-    this.optionsLayer.add(addText(this.scene, 545, 790, `${this.optionPage + 1} / ${pageCount}`, 17, "#c9d5e5", { origin: 0.5 }));
+    this.options.slice(this.optionPage * OPTION_PAGE_SIZE, (this.optionPage + 1) * OPTION_PAGE_SIZE).forEach((reward, index) => {
+      const y = 390 + index * 51;
+      const selected = reward.id === this.selectedRewardId;
+      const card = this.scene.add.rectangle(592, y, 548, 43, selected ? 0x4c604a : 0x24211d)
+        .setStrokeStyle(1.5, selected ? 0xe5bd64 : 0x4e4439)
+        .setInteractive({ useHandCursor: true });
+      const marker = this.scene.add.circle(330, y, 5, selected ? 0xe9ca75 : 0x75634d);
+      const name = addText(this.scene, 350, y - 8, reward.name, 17, selected ? "#fff1c7" : "#e3d6bf", { stroke: "#17100b", strokeThickness: 1 });
+      const type = addText(this.scene, 350, y + 10, reward.typeLabel, 12, "#aaa093", { stroke: "#17100b", strokeThickness: 0 });
+      card.on("pointerdown", () => { this.selectedRewardId = reward.id; this.render(); });
+      this.optionsLayer.add([card, marker, name, type]);
+    });
+    this.addLayerButton(this.optionsLayer, 405, 690, 105, "上一页", () => { this.optionPage -= 1; this.renderOptions(); });
+    this.addLayerButton(this.optionsLayer, 780, 690, 105, "下一页", () => { this.optionPage += 1; this.renderOptions(); });
+    this.optionsLayer.add(this.centerText(592, 690, `${this.optionPage + 1} / ${pageCount}`, 16, "#c9b994", 110));
   }
 
   renderDrops() {
     this.dropsLayer.removeAll(true);
     const pageCount = Math.max(1, Math.ceil(this.draft.length / DROP_PAGE_SIZE));
     this.dropPage = Math.max(0, Math.min(this.dropPage, pageCount - 1));
-    this.draft.slice(this.dropPage * DROP_PAGE_SIZE, (this.dropPage + 1) * DROP_PAGE_SIZE)
-      .forEach((entry, localIndex) => {
-        const index = this.dropPage * DROP_PAGE_SIZE + localIndex;
-        const y = 275 + localIndex * 72;
-        const card = this.scene.add.rectangle(1370, y, 690, 58, entry.resolved ? 0x202d46 : 0x4b2830, 1)
-          .setStrokeStyle(2, entry.resolved ? 0x486081 : 0xb45b62);
-        const label = addText(this.scene, 1045, y - 12, `${entry.name} × ${entry.quantity}`, 18, entry.resolved ? "#f2f5fc" : "#ffc2c2");
-        const type = addText(this.scene, 1045, y + 13, entry.typeLabel, 13, entry.resolved ? "#aebfd3" : "#e59a9a");
-        this.dropsLayer.add([card, label, type]);
-        this.addLayerButton(this.dropsLayer, 1510, y, 48, "−", () => this.changeDraft(index, -1));
-        this.addLayerButton(this.dropsLayer, 1570, y, 48, "+", () => this.changeDraft(index, 1));
-        this.addLayerButton(this.dropsLayer, 1650, y, 80, "删除", () => this.removeDraft(index));
-      });
-    if (!this.draft.length) {
-      this.dropsLayer.add(addText(this.scene, 1370, 430, "暂无掉落", 24, "#8190a5", { origin: 0.5 }));
-    }
-    this.addLayerButton(this.dropsLayer, 1185, 790, 110, "上一页", () => { this.dropPage -= 1; this.renderDrops(); });
-    this.addLayerButton(this.dropsLayer, 1555, 790, 110, "下一页", () => { this.dropPage += 1; this.renderDrops(); });
-    this.dropsLayer.add(addText(this.scene, 1370, 790, `${this.dropPage + 1} / ${pageCount}`, 17, "#c9d5e5", { origin: 0.5 }));
+    this.draft.slice(this.dropPage * DROP_PAGE_SIZE, (this.dropPage + 1) * DROP_PAGE_SIZE).forEach((entry, localIndex) => {
+      const index = this.dropPage * DROP_PAGE_SIZE + localIndex;
+      const y = 390 + localIndex * 57;
+      const resolved = entry.resolved;
+      const card = this.scene.add.rectangle(1328, y, 548, 48, resolved ? 0x24211d : 0x482c2d)
+        .setStrokeStyle(1.5, resolved ? 0x4e4439 : 0xa9595c);
+      const name = addText(this.scene, 1065, y - 8, `${entry.name} × ${entry.quantity}`, 17, resolved ? "#eee0c7" : "#ffc6c3", { stroke: "#17100b", strokeThickness: 1 });
+      const type = addText(this.scene, 1065, y + 11, entry.typeLabel, 12, resolved ? "#aaa093" : "#e29b99", { stroke: "#17100b", strokeThickness: 0 });
+      this.dropsLayer.add([card, name, type]);
+      this.addLayerButton(this.dropsLayer, 1470, y, 42, "−", () => this.changeDraft(index, -1), { size: 19 });
+      this.addLayerButton(this.dropsLayer, 1520, y, 42, "＋", () => this.changeDraft(index, 1), { size: 17 });
+      this.addLayerButton(this.dropsLayer, 1580, y, 70, "删除", () => this.removeDraft(index), { size: 14, variant: "danger" });
+    });
+    if (!this.draft.length) this.dropsLayer.add(this.centerText(1328, 495, "暂无掉落\n从左侧目录选择奖励后加入", 20, "#877b69", 420));
+    this.addLayerButton(this.dropsLayer, 1140, 690, 105, "上一页", () => { this.dropPage -= 1; this.renderDrops(); });
+    this.addLayerButton(this.dropsLayer, 1515, 690, 105, "下一页", () => { this.dropPage += 1; this.renderDrops(); });
+    this.dropsLayer.add(this.centerText(1328, 690, `${this.dropPage + 1} / ${pageCount}`, 16, "#c9b994", 110));
   }
 
-  addLayerButton(layer, x, y, width, label, callback) {
-    const button = addButton(this.scene, x, y, width, label, callback, { height: 38, size: 15 });
-    layer.add(button);
-    return button;
+  addLayerButton(layer, x, y, width, label, callback, options = {}) {
+    const height = options.height ?? 34;
+    const variant = options.variant ?? "utility";
+    const colors = variant === "danger"
+      ? { fill: 0x563135, hover: 0x704146, stroke: 0xa66d68 }
+      : { fill: 0x4a3523, hover: 0x60472d, stroke: 0xb88f4a };
+    const background = this.scene.add.rectangle(x, y, width, height, colors.fill)
+      .setStrokeStyle(1, colors.stroke).setInteractive({ useHandCursor: true });
+    const text = addText(this.scene, x, y, label, options.size ?? 14, "#f8e6b9", { stroke: "#1b130d", strokeThickness: 1 }).setOrigin(0.5);
+    background.on("pointerover", () => background.setFillStyle(colors.hover));
+    background.on("pointerout", () => background.setFillStyle(colors.fill));
+    background.on("pointerdown", () => { playUiClickSound(this.scene); callback(); });
+    layer.add([background, text]);
+    return background;
   }
 
   changePendingQuantity(delta) {
@@ -157,8 +239,7 @@ export class MonsterDropEditorPanel {
   }
 
   apply() {
-    const drops = this.rewardCatalog.serializeDrops(this.draft);
-    this.onApply(drops);
+    this.onApply(this.rewardCatalog.serializeDrops(this.draft));
     this.close();
   }
 }

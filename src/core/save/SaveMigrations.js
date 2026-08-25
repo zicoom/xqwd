@@ -1,4 +1,6 @@
-export const CURRENT_SAVE_VERSION = 2;
+import { getPlayerPortrait } from "../PortraitCatalog.js";
+
+export const CURRENT_SAVE_VERSION = 3;
 export const CURRENT_SAVE_CONTAINER_VERSION = 2;
 
 export const TECHNIQUE_SLOTS = Object.freeze({ main: null, auxiliary: [null, null, null, null], speed: null });
@@ -11,6 +13,19 @@ const finite = (value, fallback = 0, min = 0) => {
 const array = (value) => Array.isArray(value) ? [...value] : [];
 const record = (value) => value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
 const clone = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
+const defaultCombatShortcuts = (selectedElement = "火") => [
+  { kind: "action", id: "normal-attack" },
+  { kind: "spell", id: `element-${({ 金: "metal", 木: "wood", 水: "water", 火: "fire", 土: "earth" })[selectedElement] || "fire"}` },
+  { kind: "action", id: "defend" },
+  null, null, null, null, null, null, null,
+];
+const normalizeCombatShortcuts = (value, selectedElement) => {
+  const source = Array.isArray(value) ? value : defaultCombatShortcuts(selectedElement);
+  return Array.from({ length: 10 }, (_, index) => {
+    const entry = source[index];
+    return entry?.kind && entry?.id ? { kind: String(entry.kind), id: String(entry.id) } : null;
+  });
+};
 
 const normalizeQuantities = (value) => Object.fromEntries(
   Object.entries(record(value))
@@ -27,11 +42,14 @@ export function createDefaultSaveData() {
   return {
     version: CURRENT_SAVE_VERSION,
     player: {
-      name: "无名散修", gender: "男", roots: { 金: 0, 木: 0, 水: 0, 火: 0, 土: 0 }, selectedElement: "火",
+      name: "无名散修", gender: "女", roots: { 金: 0, 木: 0, 水: 0, 火: 0, 土: 0 }, selectedElement: "火",
+      // 存档只保存立绘编号；实际图片由 PortraitCatalog 按编号加载，避免把图片数据写入 localStorage。
+      portraitId: "cultivator-female",
       hp: 60, maxHp: 60, qi: 30, maxQi: 30, attack: 9, defense: 3,
       resistance: 0, resistanceTypes: [], cultivationExp: 0, learnedSkills: [], learnedTechniques: [],
       equippedTechniques: clone(TECHNIQUE_SLOTS),
       equippedArtifacts: Object.fromEntries(ARTIFACT_SLOT_IDS.map((slotId) => [slotId, null])),
+      combatShortcuts: defaultCombatShortcuts("火"),
       knownRecipes: [], studiedBooks: [], activeItemEffects: [], realm: "炼气初期", hasJade: false,
       spiritStones: 125850, testSpiritStoneGrantV1: false, inventory: {},
     },
@@ -62,6 +80,8 @@ function normalizeCurrentSave(input) {
     player: {
       ...defaults.player,
       ...player,
+      // 旧档、手工导入档或未来被移除的编号都回退到默认立绘，避免地图 HUD 找不到图片。
+      portraitId: getPlayerPortrait(player.portraitId).id,
       roots: Object.fromEntries(Object.keys(defaults.player.roots).map((element) => [element, finite(player.roots?.[element], 0)])),
       maxHp,
       hp: Math.min(maxHp, finite(player.hp, maxHp)),
@@ -87,6 +107,7 @@ function normalizeCurrentSave(input) {
       equippedArtifacts: Object.fromEntries(
         ARTIFACT_SLOT_IDS.map((slotId) => [slotId, player.equippedArtifacts?.[slotId] || null]),
       ),
+      combatShortcuts: normalizeCombatShortcuts(player.combatShortcuts, player.selectedElement || defaults.player.selectedElement),
     },
     chapter: { ...defaults.chapter, ...chapter },
     world: {
@@ -105,6 +126,14 @@ function normalizeCurrentSave(input) {
 // 注册表中的每一步只负责 vN → vN+1；字段清洗统一在迁移链结束后执行。
 export const SAVE_MIGRATIONS = new Map([
   [1, (save) => ({ ...save, version: 2 })],
+  [2, (save) => ({
+    ...save,
+    version: 3,
+    player: {
+      ...save.player,
+      combatShortcuts: defaultCombatShortcuts(save.player?.selectedElement),
+    },
+  })],
 ]);
 
 export function migrateSaveData(input) {
