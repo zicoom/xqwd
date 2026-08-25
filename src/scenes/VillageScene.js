@@ -6,11 +6,18 @@ import { getBuildingTemplate, getNpcTemplate } from "../core/WorldTemplateStore.
 import { SceneKeys } from "../core/SceneKeys.js";
 import { addButton, addText, playUiClickSound, startCultivationBackgroundMusic, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
 import { ChapterMapHud } from "../ui/ChapterMapHud.js";
-import { StorageBagPanel } from "../ui/StorageBagPanel.js";
+import { CharacterMenuPanel } from "../ui/character/CharacterMenuPanel.js";
 import { XianxiaDialog } from "../ui/XianxiaDialog.js";
 import { configureFullHdScene, SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
 import { exportLocalGameData, importLocalGameDataFromFile } from "../core/LocalDataTransfer.js";
+import { ItemCatalog } from "../domain/items/ItemCatalog.js";
+import { TechniqueLoadoutService } from "../domain/techniques/TechniqueLoadoutService.js";
+import { SpellService } from "../domain/spells/SpellService.js";
+import { ShopService } from "../domain/shop/ShopService.js";
+import { InventoryService } from "../domain/inventory/InventoryService.js";
+import { ArtifactLoadoutService } from "../domain/artifacts/ArtifactLoadoutService.js";
+import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
 
 /**
  * 栖霞村探索场景。
@@ -125,6 +132,26 @@ export class VillageScene extends Phaser.Scene {
   create() {
     clearEditorRoute();
     configureFullHdScene(this);
+    // 场景只在这里装配业务服务；商店、功法、法术之间不再互相调用 UI 方法。
+    this.itemCatalog = new ItemCatalog({
+      resolveTexture: (item) => {
+        const customTexture = `item-custom-${item.id}`;
+        return item.imageData && this.textures.exists(customTexture) ? customTexture : item.texture;
+      },
+    });
+    this.techniqueService = new TechniqueLoadoutService({ player: gameState.player, catalog: this.itemCatalog, save: saveFirstChapterProgress });
+    this.spellService = new SpellService({ player: gameState.player, catalog: this.itemCatalog });
+    this.shopService = new ShopService({ player: gameState.player, world: gameState.world, catalog: this.itemCatalog, save: saveFirstChapterProgress });
+    this.inventoryService = new InventoryService({ player: gameState.player, save: saveFirstChapterProgress });
+    this.artifactService = new ArtifactLoadoutService({ player: gameState.player, catalog: this.itemCatalog, save: saveFirstChapterProgress });
+    this.merchantPanel = new MerchantPanel({ scene: this, shopService: this.shopService, save: saveFirstChapterProgress });
+    this.characterMenu = new CharacterMenuPanel(this, {
+      catalog: this.itemCatalog,
+      inventoryService: this.inventoryService,
+      techniqueService: this.techniqueService,
+      spellService: this.spellService,
+      artifactService: this.artifactService,
+    });
     // 大地图常驻一段轻柔的修仙纯音乐。浏览器若刚刷新而尚未允许播放，
     // 会在玩家第一次点击或按键时自动开始。
     startCultivationBackgroundMusic(this);
@@ -141,8 +168,6 @@ export class VillageScene extends Phaser.Scene {
     this.settingsDialog = null;
     this.featurePanel = null;
     this.featureDialog = null;
-    this.storageBagPanel = null;
-    this.storageBag = null;
 
     // 青云山原图每块是 2000×2000 像素。显示时按 60% 缩小，
     // 既能让一屏看到更多地形，也能让水墨线条在缩小后更清楚。
@@ -252,13 +277,13 @@ export class VillageScene extends Phaser.Scene {
       // 打开任务日志时，所有地图点击都由日志界面接管，不能触发寻路。
       if (this.chapterMapHud?.isTaskLogOpen()) return;
       // 储物袋和商店一样是独立的最上层界面，绝不允许点击穿透到大地图。
-      if (this.storageBagPanel?.visible) {
-        this.handleStorageBagPointer(uiPointer);
+      if (this.characterMenu.visible) {
+        this.characterMenu.handlePointer(uiPointer);
         return;
       }
       // 商店是最高层全屏界面，打开时绝不能把点击穿透到大地图寻路。
-      if (this.merchantShopPanel?.visible) {
-        this.handleMerchantShopPointer(uiPointer);
+      if (this.merchantPanel.visible) {
+        this.merchantPanel.handlePointer(uiPointer);
         return;
       }
       // 功能提示弹窗位于最上层；它打开时只接收自己的关闭按钮点击。
@@ -280,32 +305,28 @@ export class VillageScene extends Phaser.Scene {
         this.openNearbyNpcProfile(this.chapterMapHud.nearbyObject);
         return;
       }
-      if (!this.dialog.visible && !this.npcProfilePanel?.visible && !this.settingsPanel && !this.featurePanel && !this.storageBagPanel?.visible && !this.chapterMapHud?.isPointerOverHud(uiPointer) && uiPointer.y < 915) {
+      if (!this.dialog.visible && !this.npcProfilePanel?.visible && !this.settingsPanel && !this.featurePanel && !this.characterMenu.visible && !this.chapterMapHud?.isPointerOverHud(uiPointer) && uiPointer.y < 915) {
         // 镜头开始滚动后，pointer.x/y 只是屏幕坐标；worldX/worldY 才是地图上的真实位置。
         this.target = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
       }
     });
     this.input.on("pointermove", (pointer) => {
-      if (this.storageBagPanel?.visible) this.handleStorageBagPointerMove(this.getUiPointer(pointer));
-      if (this.merchantShopPanel?.visible) this.handleMerchantShopPointerMove(this.getUiPointer(pointer));
+      if (this.characterMenu.visible) this.characterMenu.handlePointerMove(this.getUiPointer(pointer));
+      if (this.merchantPanel.visible) this.merchantPanel.handlePointerMove(this.getUiPointer(pointer));
     });
     this.input.on("pointerup", () => {
       // 商品列表滚动条拖动结束后立刻解除状态，避免后续点击仍被当成拖动。
-      this.merchantProductScrollDragging = false;
+      this.merchantPanel.endProductScrollDrag();
     });
     // 储物袋只显示两行格子。超过 24 件时可以在袋子区域滚轮翻到下一行。
     this.input.on("wheel", (pointer, _objects, _deltaX, deltaY) => {
-      if (this.storageBagPanel?.visible && this.isStorageBagGridPointer(this.getUiPointer(pointer))) {
-        this.changeStorageBagScroll(deltaY > 0 ? 1 : -1);
+      if (this.characterMenu.visible && this.characterMenu.isGridPointer(this.getUiPointer(pointer))) {
+        this.characterMenu.scroll(deltaY > 0 ? 1 : -1);
         return;
       }
-      if (!this.merchantShopPanel?.visible) return;
+      if (!this.merchantPanel.visible) return;
       const uiPointer = this.getUiPointer(pointer);
-      if (this.isMerchantProductPointer(uiPointer)) {
-        this.changeMerchantProductScroll(deltaY > 0 ? 1 : -1);
-        return;
-      }
-      if (this.isMerchantCartPointer(uiPointer)) this.changeMerchantCartScroll(deltaY > 0 ? 1 : -1);
+      this.merchantPanel.handleWheel(uiPointer, deltaY);
     });
   }
 
@@ -568,7 +589,7 @@ export class VillageScene extends Phaser.Scene {
     if (!object) return;
     if (this.npcProfileIsMerchant) {
       this.closeNearbyNpcProfile();
-      this.openMerchantShop(object);
+      this.merchantPanel.open(object);
       return;
     }
     this.rememberPlayerPosition();
@@ -600,1280 +621,32 @@ export class VillageScene extends Phaser.Scene {
     if (y >= 338 && y <= 382 && x >= -150 && x <= 150) this.activateNpcProfileAction();
   }
 
-  /** 商店中出售的第一批基础灵草。以后装备、丹方只需在这里增加同样格式的数据。 */
-  getMerchantItems() {
-    // 这是商店首次测试用的补货版本：已有旧存档只会在首次打开商店时补到 50 个，
-    // 之后购买、关闭、刷新页面都会继续使用扣减后的真实库存。
-    const stockVersion = "merchant-stock-50-test-v1";
-    if (gameState.world.merchantStockVersion !== stockVersion) {
-      gameState.world.merchantStock = {};
-      gameState.world.merchantStockVersion = stockVersion;
-      saveFirstChapterProgress();
-    }
-    const stock = gameState.world.merchantStock || {};
-    return getItemTemplates()
-      .filter((item) => item.sellable)
-      .map((item) => {
-        const customTexture = `item-custom-${item.id}`;
-        return {
-          ...item,
-          // 自定义图标在本场景已经预加载时优先使用；尚未重新进入地图时先安全使用原图标。
-          texture: item.imageData && this.textures.exists(customTexture) ? customTexture : item.texture,
-          stock: Number.isFinite(Number(stock[item.id])) ? Math.max(0, Number(stock[item.id])) : item.stock,
-        };
-      })
-      .filter((item) => item.texture && this.textures.exists(item.texture));
-  }
 
-  /** 按 Pixso「商人 Ui 界面」建立固定 1678 × 920 的商店，并保留可实际购买的功能。 */
-  createMerchantShopPanel() {
-    const panel = this.add.container(0, 0).setScrollFactor(0).setDepth(1800).setVisible(false);
-    const shade = this.add.rectangle(0, 0, 1920, 1080, 0x071009, 0.64).setOrigin(0).setInteractive();
-    const background = this.add.graphics();
-    background.fillStyle(0x322115, 1);
-    background.fillRoundedRect(121, 80, 1678, 920, 16);
-    background.lineStyle(3, 0xb6773c, 1);
-    background.strokeRoundedRect(121, 80, 1678, 920, 16);
-    background.fillStyle(0x201208, 1);
-    background.fillRect(124, 80, 1672, 88);
-    background.lineStyle(2, 0xb6773c, 1);
-    background.lineBetween(124, 168, 1796, 168);
-    panel.add([shade, background]);
-
-    const headerCenterY = 124;
-    const merchantStoneMark = this.add.image(151, headerCenterY, "merchant-spirit-stone").setDisplaySize(12, 20);
-    this.merchantMerchantCurrencyText = addText(this, 165, headerCenterY, "", 26, "#f2d1ab", { strokeThickness: 1 }).setOrigin(0, 0.5);
-    const playerStoneMark = this.add.image(1450, headerCenterY, "merchant-spirit-stone").setDisplaySize(12, 20);
-    this.merchantPlayerCurrencyText = addText(this, 1464, headerCenterY, "", 26, "#f2d1ab", { strokeThickness: 1 }).setOrigin(0, 0.5);
-    const title = addText(this, 900, headerCenterY, "商人", 38, "#f3d797", { strokeThickness: 2 }).setOrigin(0.5);
-    this.merchantBuyTab = this.add.rectangle(1050, 124, 112, 44, 0x80532c, 1).setStrokeStyle(1, 0xb98548).setInteractive({ useHandCursor: true });
-    this.merchantSellTab = this.add.rectangle(1175, 124, 112, 44, 0x392719, 1).setStrokeStyle(1, 0x765438).setInteractive({ useHandCursor: true });
-    this.merchantBuyTabText = addText(this, 1050, headerCenterY, "买入", 18, "#ffe284", { strokeThickness: 0 }).setOrigin(0.5);
-    this.merchantSellTabText = addText(this, 1175, headerCenterY, "卖出", 18, "#b9a794", { strokeThickness: 0 }).setOrigin(0.5);
-    const close = this.add.rectangle(1754, 124, 40, 40, 0x6a4b2e, 1).setStrokeStyle(1, 0x936c42).setInteractive({ useHandCursor: true });
-    const closeText = addText(this, 1754, headerCenterY, "×", 28, "#f1d7aa", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([merchantStoneMark, this.merchantMerchantCurrencyText, playerStoneMark, this.merchantPlayerCurrencyText, title, this.merchantBuyTab, this.merchantSellTab, this.merchantBuyTabText, this.merchantSellTabText, close, closeText]);
-
-    const categoryBox = this.add.graphics();
-    categoryBox.fillStyle(0x24170f, 0.96);
-    categoryBox.fillRoundedRect(143, 201, 135, 458, 14);
-    categoryBox.lineStyle(3, 0x775c3f, 1);
-    categoryBox.strokeRoundedRect(143, 201, 135, 458, 14);
-    panel.add(categoryBox);
-    this.merchantCategoryButtons = [];
-    ["全部", "灵草", "丹药", "丹方", "装备", "法宝", "材料", "丹炉"].forEach((name, index) => {
-      // 原图为 95×45，保持一对一尺寸；上、下留白与 Pixso 效果图一致。
-      const y = 243 + index * 53;
-      const bg = this.add.image(211, y, "merchant-category-normal").setDisplaySize(95, 45).setInteractive({ useHandCursor: true });
-      const text = addText(this, 211, y - 1, name, 21, "#f2dfbf", {
-        stroke: "#2a170d",
-        strokeThickness: 1,
-      }).setOrigin(0.5);
-      panel.add([bg, text]);
-      this.merchantCategoryButtons.push({ name, bg, text, y });
-    });
-
-    const detail = this.add.graphics();
-    detail.fillStyle(0x24170f, 0.96);
-    detail.fillRoundedRect(1336, 201, 438, 515, 18);
-    panel.add(detail);
-    // 标签为暖金色，具体类型与品阶为灰米色，和设计稿的层级一致。
-    const merchantDetailTypeLabel = addText(this, 1370, 228, "类型：", 20, "#e6c07f", { strokeThickness: 0 });
-    this.merchantDetailType = addText(this, 1432, 228, "", 20, "#b8ada0", { strokeThickness: 0 });
-    const merchantDetailGradeLabel = addText(this, 1635, 228, "品阶：", 20, "#e6c07f", { strokeThickness: 0 });
-    this.merchantDetailGrade = addText(this, 1740, 228, "", 20, "#b8ada0", { strokeThickness: 0 }).setOrigin(1, 0);
-    this.merchantDetailImageFrame = this.add.rectangle(1555, 318, 104, 104, 0x3a2a1b).setStrokeStyle(2, 0x674a31).setOrigin(0.5);
-    this.merchantDetailImage = this.add.image(1555, 318, "merchant-herb-baixiangye").setDisplaySize(92, 92);
-    this.merchantDetailName = addText(this, 1555, 405, "", 25, "#ffe000", { strokeThickness: 1 }).setOrigin(0.5);
-    this.merchantDetailDesc = addText(this, 1375, 435, "", 17, "#a89c8e", { strokeThickness: 0, wordWrap: { width: 352 }, lineSpacing: 8 });
-    this.merchantDetailPriceLabel = addText(this, 1430, 535, "单价", 20, "#ead3b4", { strokeThickness: 0 }).setOrigin(0, 0.5);
-    const detailPriceBg = this.add.graphics();
-    detailPriceBg.fillStyle(0x4a2f1a, 1);
-    detailPriceBg.fillRoundedRect(1510, 513, 124, 44, 6);
-    this.merchantDetailPriceIcon = this.add.image(1532, 535, "merchant-spirit-stone").setDisplaySize(10, 17);
-    this.merchantDetailPrice = addText(this, 1544, 535, "", 20, "#ead3b4", { strokeThickness: 0 }).setOrigin(0, 0.5);
-    this.merchantDetailQuantity = addText(this, 1370, 610, "购买数量", 20, "#d4ae7f", { strokeThickness: 0 });
-    const makeQuantityControl = (centerX, width, fillColor, strokeColor) => {
-      const control = this.add.graphics();
-      control.fillStyle(fillColor, 1);
-      control.fillRoundedRect(centerX - width / 2, 643, width, 50, 4);
-      control.lineStyle(2, strokeColor, 1);
-      control.strokeRoundedRect(centerX - width / 2, 643, width, 50, 4);
-      control.setInteractive(new Phaser.Geom.Rectangle(centerX - width / 2, 643, width, 50), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-      return control;
-    };
-    // 四个按钮之间统一保留 10px，不重叠也不挤在一起。
-    const minus = makeQuantityControl(1397, 54, 0x3a281b, 0x604226);
-    const quantityInput = makeQuantityControl(1512, 156, 0x1b1510, 0xb58234);
-    const plus = makeQuantityControl(1627, 54, 0x3a281b, 0x604226);
-    const max = makeQuantityControl(1728, 74, 0x50341f, 0x805e35);
-    this.merchantQuantityText = addText(this, 1512, 668, "1", 22, "#f8e8d3", { strokeThickness: 0 }).setOrigin(0.5);
-    const minusText = addText(this, 1397, 668, "−", 28, "#f5e7d5", { strokeThickness: 0 }).setOrigin(0.5);
-    const plusText = addText(this, 1627, 668, "+", 28, "#f5e7d5", { strokeThickness: 0 }).setOrigin(0.5);
-    const maxText = addText(this, 1728, 668, "最大", 18, "#f5e7d5", { strokeThickness: 0 }).setOrigin(0.5);
-    // 选中商品后，按 1 / 10 / 全部就直接加入清单。
-    // 实际点击统一交给 handleMerchantShopPointer，防止缩放画面时重复加入。
-    panel.add([merchantDetailTypeLabel, this.merchantDetailType, merchantDetailGradeLabel, this.merchantDetailGrade, this.merchantDetailImageFrame, this.merchantDetailImage, this.merchantDetailName, this.merchantDetailDesc, this.merchantDetailPriceLabel, detailPriceBg, this.merchantDetailPriceIcon, this.merchantDetailPrice, this.merchantDetailQuantity, minus, quantityInput, plus, max, minusText, this.merchantQuantityText, plusText, maxText]);
-
-    const bag = this.add.graphics();
-    bag.fillStyle(0x24170f, 0.98);
-    bag.fillRoundedRect(298, 730, 1476, 246, 18);
-    panel.add(bag);
-    // 储物袋名称使用横向文字，和右侧物品格的阅读方向一致。
-    panel.add(addText(this, 211, 780, "储物袋", 28, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5));
-    // 明确的购买入口，避免玩家必须靠“双击商品”才知道怎么购买。
-    const buyAll = this.add.graphics();
-    buyAll.fillStyle(0x315d42, 1);
-    buyAll.fillRoundedRect(147, 830, 128, 40, 4);
-    buyAll.lineStyle(1, 0x6d9d74, 1);
-    buyAll.strokeRoundedRect(147, 830, 128, 40, 4);
-    buyAll.setInteractive(new Phaser.Geom.Rectangle(147, 830, 128, 40), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-    const buyAllText = addText(this, 211, 850, "购买全部", 16, "#edf4da", { strokeThickness: 0 }).setOrigin(0.5);
-    this.merchantActionButtonText = buyAllText;
-    this.merchantProductsLayer = this.add.container(0, 0);
-    this.merchantCartLayer = this.add.container(0, 0);
-    this.merchantShopNotice = addText(this, 960, 710, "点击已选商品购买", 15, "#b8a387", { origin: 0.5, strokeThickness: 0 });
-    this.merchantCancelButton = this.add.container(0, 0).setVisible(false);
-    // 使用用户提供的 117×60 按钮图，文字严格锚定在背景正中。
-    const cancelBg = this.add.image(0, 0, "merchant-cart-cancel").setDisplaySize(117, 60).setInteractive({ useHandCursor: true });
-    const cancelText = addText(this, 0, 0, "取消购物", 15, "#f6e4cc", { strokeThickness: 0 }).setOrigin(0.5);
-    this.merchantCancelButton.add([cancelBg, cancelText]);
-    this.merchantPurchaseConfirm = this.add.container(0, 0).setVisible(false);
-    const confirmShade = this.add.rectangle(0, 0, 1920, 1080, 0x050302, 0.54).setOrigin(0).setInteractive();
-    // 购买确认弹窗按效果图固定为 810×439：不再使用原本过窄的基础矩形。
-    const confirmCard = this.add.graphics();
-    confirmCard.fillStyle(0x24170f, 1);
-    confirmCard.fillRoundedRect(555, 320, 810, 439, 10);
-    confirmCard.lineStyle(2, 0xc1863d, 1);
-    confirmCard.strokeRoundedRect(555, 320, 810, 439, 10);
-    this.merchantPurchaseTitle = addText(this, 960, 373, "确认购买", 29, "#f1c35c", { strokeThickness: 1 }).setOrigin(0.5);
-    this.merchantPurchaseCostPrefix = addText(this, 916, 424, "将花费", 20, "#baac9d", { strokeThickness: 0 }).setOrigin(1, 0.5);
-    this.merchantPurchaseCostIcon = this.add.image(938, 424, "merchant-spirit-stone").setDisplaySize(10, 17);
-    this.merchantPurchaseCostText = addText(this, 952, 424, "", 20, "#d9c7ae", { strokeThickness: 0 }).setOrigin(0, 0.5);
-    this.merchantPurchaseItemsLayer = this.add.container(0, 0);
-    // 购买失败等提示显示在按钮上方，不会挤乱物品卡片。
-    this.merchantPurchaseSummary = addText(this, 960, 702, "", 16, "#e6b98c", { strokeThickness: 0 }).setOrigin(0.5);
-    const makeConfirmButton = (x, fill, border) => {
-      const button = this.add.graphics();
-      button.fillStyle(fill, 1);
-      button.fillRoundedRect(x, 650, 128, 40, 4);
-      button.lineStyle(1, border, 1);
-      button.strokeRoundedRect(x, 650, 128, 40, 4);
-      button.setInteractive(new Phaser.Geom.Rectangle(x, 650, 128, 40), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-      return button;
-    };
-    // 效果图的顺序是：左侧“确认购买”，右侧“暂不购买”。
-    const confirmButton = makeConfirmButton(824, 0x315f42, 0x71a177);
-    const cancelButton = makeConfirmButton(971, 0x5a3434, 0x925b5b);
-    const confirmText = addText(this, 888, 670, "确认购买", 16, "#f4e8d4", { strokeThickness: 0 }).setOrigin(0.5);
-    const cancelConfirmText = addText(this, 1035, 670, "暂不购买", 16, "#f4e8d4", { strokeThickness: 0 }).setOrigin(0.5);
-    this.merchantPurchaseConfirm.add([confirmShade, confirmCard, this.merchantPurchaseTitle, this.merchantPurchaseCostPrefix, this.merchantPurchaseCostIcon, this.merchantPurchaseCostText, this.merchantPurchaseItemsLayer, this.merchantPurchaseSummary, confirmButton, cancelButton, confirmText, cancelConfirmText]);
-    panel.add([buyAll, buyAllText, this.merchantProductsLayer, this.merchantCartLayer, this.merchantShopNotice, this.merchantCancelButton, this.merchantPurchaseConfirm]);
-    this.merchantShopPanel = panel;
-  }
-
-  openMerchantShop(object) {
-    if (!this.merchantShopPanel) this.createMerchantShopPanel();
-    // 上一次关闭时可能仍有淡入动画在运行；重新进入前先完全停止它，
-    // 防止旧动画把新打开的商店重新设为透明，造成“点了没反应”的假象。
-    this.tweens.killTweensOf(this.merchantShopPanel);
-    this.closeMerchantQuantityInput(false);
-    this.merchantProductScrollDragging = false;
-    this.merchantCancelButton?.setVisible(false);
-    this.merchantPurchaseConfirm?.setVisible(false);
-    this.merchantShopObject = object;
-    this.target = null;
-    this.merchantItems = this.getMerchantItems();
-    this.merchantCategory = "全部";
-    this.merchantBuyQuantity = 1;
-    this.merchantMode = "buy";
-    this.merchantCarts = { buy: [], sell: [] };
-    this.merchantCart = this.merchantCarts.buy;
-    this.merchantCartScrollRow = 0;
-    this.merchantProductScrollRow = 0;
-    this.merchantProductScrollDragging = false;
-    this.refreshMerchantCurrencies();
-    this.merchantShopPanel.setAlpha(0).setVisible(true);
-    this.selectMerchantItem(this.merchantItems.find((item) => item.stock > 0) || this.merchantItems[0], true);
-    this.selectMerchantCategory("全部");
-    this.setMerchantMode("buy", true);
-    this.renderMerchantCart();
-    this.tweens.add({ targets: this.merchantShopPanel, alpha: 1, duration: 180, ease: "Sine.Out" });
-  }
-
-  closeMerchantShop() {
-    if (!this.merchantShopPanel?.visible) return;
-    playUiClickSound(this);
-    this.tweens.killTweensOf(this.merchantShopPanel);
-    this.closeMerchantQuantityInput(false);
-    this.merchantProductScrollDragging = false;
-    this.merchantCancelButton?.setVisible(false);
-    this.merchantPurchaseConfirm?.setVisible(false);
-    this.merchantShopPanel.setAlpha(1).setVisible(false);
-    this.merchantShopObject = null;
-    saveFirstChapterProgress();
-  }
-
-  /** 商人和玩家的钱各自显示、各自保存，买卖时立即刷新。 */
-  refreshMerchantCurrencies() {
-    const merchantStones = Number(gameState.world.merchantSpiritStones);
-    if (!Number.isFinite(merchantStones)) gameState.world.merchantSpiritStones = 125850;
-    // 加入待购清单时先预览扣除后的灵石，让玩家在结算前就能看清花费。
-    const reservedCost = (this.merchantCarts?.buy || []).reduce((total, entry) => total + entry.item.price * entry.quantity, 0);
-    const shownPlayerStones = Math.max(0, (Number(gameState.player.spiritStones) || 0) - reservedCost);
-    this.merchantMerchantCurrencyText?.setText(`商人灵石 ${(Number(gameState.world.merchantSpiritStones) || 0).toLocaleString("zh-CN")}`);
-    this.merchantPlayerCurrencyText?.setText(`我的灵石 ${shownPlayerStones.toLocaleString("zh-CN")}`);
-  }
-
-  selectMerchantCategory(category) {
-    this.merchantCategory = category;
-    this.merchantProductScrollRow = 0;
-    this.merchantCategoryButtons.forEach((button) => {
-      const active = button.name === category;
-      button.bg.setTexture(active ? "merchant-category-selected" : "merchant-category-normal");
-      button.text.setColor(active ? "#fff2c6" : "#f2dfbf");
-    });
-    const visibleItems = this.getMerchantVisibleItems();
-    this.renderMerchantProductCards(visibleItems);
-    const action = this.merchantMode === "sell" ? "加入出售清单" : "加入储物袋";
-    this.merchantShopNotice.setText(visibleItems.some((item) => item.stock > 0) ? `点击商品查看；再次点击同一商品即可${action}` : this.merchantMode === "sell" ? "背包没有可出售的该类物品" : `${category} 暂未上架`);
-  }
-
-  /** 卖出页只读取玩家真实拥有的物品，价格为商人售价的一半。 */
-  getSellableMerchantItems() {
-    const inventory = gameState.player.inventory || {};
-    return this.merchantItems
-      .map((item) => ({ ...item, stock: Math.max(0, Number(inventory[item.id]) || 0), price: Math.max(1, Math.floor(item.price * 0.5)), sellPrice: true }))
-      .filter((item) => item.stock > 0);
-  }
-
-  getMerchantVisibleItems() {
-    const source = this.merchantMode === "sell" ? this.getSellableMerchantItems() : this.merchantItems;
-    if (this.merchantCategory === "全部") return source;
-
-    // 左侧“丹药、装备、材料”与物品管理编辑器的类型一一对应。
-    // “器材”是旧版本材料的兼容名称，仍归到材料里显示。
-    const categoryTypes = {
-      "灵草": ["灵草"],
-      "丹药": ["丹药"],
-      "装备": ["装备"],
-      "材料": ["材料", "器材"],
-    };
-    const allowedTypes = categoryTypes[this.merchantCategory];
-    return allowedTypes ? source.filter((item) => allowedTypes.includes(item.type)) : [];
-  }
-
-  /** 买入清单中的数量会临时占用商人库存，直到取消或确认购买。 */
-  getMerchantAvailableStock(item) {
-    const reserved = (this.merchantCarts?.[this.merchantMode] || [])
-      .filter((entry) => entry.item.id === item.id)
-      .reduce((total, entry) => total + entry.quantity, 0);
-    return Math.max(0, (Number(item.stock) || 0) - reserved);
-  }
-
-  /** 切换买入/卖出；两个页签保留各自尚未结算的清单。 */
-  setMerchantMode(mode, silent = false) {
-    this.merchantMode = mode;
-    this.merchantCart = this.merchantCarts?.[mode] || [];
-    if (this.merchantCarts) this.merchantCarts[mode] = this.merchantCart;
-    this.merchantCartScrollRow = 0;
-    this.merchantProductScrollRow = 0;
-    this.merchantProductScrollDragging = false;
-    const buying = mode === "buy";
-    this.merchantBuyTab?.setFillStyle(buying ? 0x80532c : 0x392719).setStrokeStyle(1, buying ? 0xb98548 : 0x765438);
-    this.merchantSellTab?.setFillStyle(buying ? 0x392719 : 0x80532c).setStrokeStyle(1, buying ? 0x765438 : 0xb98548);
-    this.merchantBuyTabText?.setColor(buying ? "#ffe284" : "#b9a794");
-    this.merchantSellTabText?.setColor(buying ? "#b9a794" : "#ffe284");
-    this.merchantActionButtonText?.setText(buying ? "购买全部" : "出售全部");
-    const visibleItems = this.getMerchantVisibleItems();
-    const next = visibleItems.find((item) => item.stock > 0);
-    if (next) this.selectMerchantItem(next, true);
-    this.renderMerchantProductCards(visibleItems);
-    this.renderMerchantCart();
-    this.refreshMerchantCurrencies();
-    if (!silent) this.merchantShopNotice.setText(buying ? "买入：选择商人物品加入储物袋" : "卖出：选择背包物品加入出售清单");
-  }
-
-  getMerchantGradeColor(grade) {
-    return ({ "凡品": 0x414040, "灵品": 0x285c45, "玄品": 0x294e71, "地品": 0x70471d, "天品": 0x653962, "仙品": 0x9a6920, "神器": 0x8b3b37 })[grade] || 0x414040;
-  }
-
-  /** 中文说明按固定字符数换行，避免没有空格的药材描述超出右侧详情框。 */
-  formatMerchantDescription(description) {
-    const characters = Array.from(`药材作用： ${description || "暂无说明"}`);
-    const lineLength = 19;
-    const lines = [];
-    for (let index = 0; index < characters.length; index += lineLength) {
-      lines.push(characters.slice(index, index + lineLength).join(""));
-    }
-    return lines.join("\n");
-  }
-
-  /** 商人商品区固定显示四列四行，超过十六件后通过右侧滚动条查看后续商品。 */
-  getMerchantProductScrollMetrics(items = []) {
-    const columns = 4;
-    const visibleRows = 4;
-    const totalRows = Math.ceil(items.length / columns);
-    return {
-      columns,
-      visibleRows,
-      totalRows,
-      maxScrollRow: Math.max(0, totalRows - visibleRows),
-    };
-  }
-
-  getMerchantScrollableProducts() {
-    return this.getMerchantVisibleItems().filter((item) => item.stock > 0);
-  }
-
-  /** 商品区域与滚动条都支持鼠标滚轮，不会影响下方储物袋。 */
-  isMerchantProductPointer(pointer) {
-    return pointer.x >= 280 && pointer.x <= 1328 && pointer.y >= 195 && pointer.y <= 724;
-  }
-
-  changeMerchantProductScroll(change) {
-    const items = this.getMerchantScrollableProducts();
-    const { maxScrollRow } = this.getMerchantProductScrollMetrics(items);
-    const next = Phaser.Math.Clamp((this.merchantProductScrollRow || 0) + change, 0, maxScrollRow);
-    if (next === this.merchantProductScrollRow) return;
-    this.merchantProductScrollRow = next;
-    this.renderMerchantProductCards(items);
-  }
-
-  /** 将拖动位置转换为对应的商品行，并立即重绘当前商品页。 */
-  updateMerchantProductScrollFromPointer(pointerY) {
-    const items = this.getMerchantScrollableProducts();
-    const { totalRows, visibleRows, maxScrollRow } = this.getMerchantProductScrollMetrics(items);
-    if (maxScrollRow <= 0) return;
-    const trackTop = 210;
-    const trackHeight = 508;
-    const thumbHeight = Math.max(42, trackHeight * (visibleRows / totalRows));
-    const usableHeight = trackHeight - thumbHeight;
-    const ratio = Phaser.Math.Clamp((pointerY - trackTop - thumbHeight / 2) / usableHeight, 0, 1);
-    const next = Phaser.Math.Clamp(Math.round(ratio * maxScrollRow), 0, maxScrollRow);
-    if (next === this.merchantProductScrollRow) return;
-    this.merchantProductScrollRow = next;
-    this.renderMerchantProductCards(items);
-  }
-
-  renderMerchantProductCards(items) {
-    this.merchantProductsLayer.removeAll(true);
-    const availableItems = items.filter((item) => item.stock > 0);
-    const { columns, visibleRows, totalRows, maxScrollRow } = this.getMerchantProductScrollMetrics(availableItems);
-    this.merchantProductScrollRow = Phaser.Math.Clamp(this.merchantProductScrollRow || 0, 0, maxScrollRow);
-    const startIndex = this.merchantProductScrollRow * columns;
-    const shownItems = availableItems.slice(startIndex, startIndex + columns * visibleRows);
-    shownItems.forEach((item, index) => {
-      const column = index % 4;
-      const row = Math.floor(index / 4);
-      const x = 300 + column * 255;
-      const y = 210 + row * 130;
-      const card = this.add.container(x, y);
-      // 草药卡片统一为 240×118：只保留一层深棕圆角底，
-      // 不再使用品阶彩色外边线或额外的内层背景。
-      const bg = this.add.graphics();
-      const drawCardBackground = (hovered = false) => {
-        bg.clear();
-        bg.fillStyle(hovered ? 0x2a1b10 : 0x24170f, 1);
-        bg.fillRoundedRect(0, 0, 240, 118, 6);
-      };
-      drawCardBackground();
-      bg.setInteractive(new Phaser.Geom.Rectangle(0, 0, 240, 118), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-      // 草药图由三层组成：105×98 棕色圆角外框 → 品阶色内底 + #2E2117 内阴影 → 80×80 草药图。
-      const frame = this.add.graphics();
-      const gradeColor = this.getMerchantGradeColor(item.grade);
-      frame.fillStyle(0x5b3b25, 1);
-      frame.fillRoundedRect(12, 10, 105, 98, 6);
-      // 第二层是 101×94 的品阶纯色面，不使用描边。
-      frame.fillStyle(gradeColor, 1);
-      frame.fillRoundedRect(14, 12, 101, 94, 5);
-      // 用数层半透明 #2E2117 做柔和内阴影，避免出现一圈生硬的边线。
-      frame.fillStyle(0x2e2117, 0.6);
-      frame.fillRoundedRect(14, 12, 101, 94, 5);
-      frame.fillStyle(gradeColor, 0.18);
-      frame.fillRoundedRect(18, 16, 93, 86, 4);
-      frame.fillStyle(gradeColor, 0.12);
-      frame.fillRoundedRect(22, 20, 85, 78, 3);
-      const image = this.add.image(64.5, 59, item.texture).setDisplaySize(80, 80);
-      // 商店与储物袋保持同一套交互反馈：悬浮或选中时显示金色高亮框。
-      const highlight = this.add.graphics();
-      const drawHighlight = (active) => {
-        highlight.clear();
-        if (!active) return;
-        highlight.lineStyle(2, 0xfcc01f, 1);
-        highlight.strokeRoundedRect(13, 11, 103, 96, 6);
-      };
-      drawHighlight(this.merchantSelectedItem?.id === item.id);
-      const shownStock = this.getMerchantAvailableStock(item);
-      const stock = addText(this, 108, 14, String(shownStock), 14, shownStock > 0 ? "#c4c0b8" : "#a07870", { strokeThickness: 1 }).setOrigin(1, 0);
-      const name = addText(this, 126, 18, item.name, 20, "#f2d1ab", { strokeThickness: 0 });
-      // 每个价格底框统一为 4px 圆角，并使用实际灵石图片，不再用文字菱形代替。
-      const priceBg = this.add.graphics();
-      priceBg.fillStyle(0x4a2f1a, 1);
-      priceBg.fillRoundedRect(129, 69, 98, 36, 4);
-      const priceLabel = item.sellPrice ? `回收 ${item.price}` : String(item.price);
-      const price = addText(this, 0, 87, priceLabel, 17, item.sellPrice ? "#9be0b1" : "#d8dfbf", { strokeThickness: 0 }).setOrigin(0, 0.5);
-      const priceIcon = this.add.image(0, 87, "merchant-spirit-stone").setDisplaySize(10, 17);
-      const priceContentWidth = 10 + 6 + price.width;
-      const priceStartX = 178 - priceContentWidth / 2;
-      priceIcon.setX(priceStartX + 5);
-      price.setX(priceStartX + 16);
-      bg.on("pointerover", () => {
-        drawCardBackground(true);
-        drawHighlight(true);
-      });
-      bg.on("pointerout", () => {
-        drawCardBackground(false);
-        drawHighlight(this.merchantSelectedItem?.id === item.id);
-      });
-      // 商品点击也由 handleMerchantShopPointer 统一接收，避免缩放或重开商店时
-      // 同一次点击被商品本身和全局界面各执行一次。
-      card.add([bg, frame, image, stock, name, priceBg, priceIcon, price, highlight]);
-      this.merchantProductsLayer.add(card);
-    });
-    // 商品超过当前四行时，显示可拖动的细滚动条。它放在商品区与右侧详情之间，
-    // 不会遮住商品卡或详情文字。
-    if (maxScrollRow > 0) {
-      const trackTop = 210;
-      const trackHeight = 508;
-      const track = this.add.rectangle(1320, trackTop + trackHeight / 2, 12, trackHeight, 0x170f0a, 0.94)
-        .setStrokeStyle(1, 0x6f4c2d);
-      const thumbHeight = Math.max(42, trackHeight * (visibleRows / totalRows));
-      const thumbY = trackTop + thumbHeight / 2
-        + (trackHeight - thumbHeight) * (this.merchantProductScrollRow / maxScrollRow);
-      const thumb = this.add.rectangle(1320, thumbY, 8, thumbHeight, 0xb7833f, 1)
-        .setStrokeStyle(1, 0xf1ca72);
-      this.merchantProductsLayer.add([track, thumb]);
-    }
-  }
-
-  selectMerchantItem(item, silent = false) {
-    const selectingDifferentItem = this.merchantSelectedItem?.id !== item?.id;
-    this.merchantSelectedItem = item;
-    const available = this.getMerchantAvailableStock(item);
-
-    // 新选商品默认购买 1 个；加入购物清单后则保留玩家手动填写的数量。
-    if (selectingDifferentItem || !Number.isFinite(this.merchantBuyQuantity)) {
-      this.merchantBuyQuantity = available > 0 ? 1 : 0;
-    } else {
-      this.merchantBuyQuantity = Phaser.Math.Clamp(
-        this.merchantBuyQuantity,
-        available > 0 ? 1 : 0,
-        available,
-      );
-    }
-    this.merchantDetailType.setText(item.type);
-    this.merchantDetailGrade.setText(item.grade).setColor("#b8ada0");
-    this.merchantDetailImage.setTexture(item.texture).setDisplaySize(92, 92);
-    this.merchantDetailImageFrame.setFillStyle(this.getMerchantGradeColor(item.grade));
-    this.merchantDetailName.setText(item.name);
-    this.merchantDetailDesc.setText(this.formatMerchantDescription(item.description));
-    this.merchantDetailPriceLabel.setText(item.sellPrice ? "回收单价" : "单价");
-    this.merchantDetailPrice.setText(String(item.price));
-    this.merchantQuantityText.setText(String(this.merchantBuyQuantity));
-    if (!silent) {
-      this.merchantShopNotice.setText(`已选择 ${item.name}，再点同一商品即可${this.merchantMode === "sell" ? "加入出售清单" : "加入储物袋"}`);
-      this.renderMerchantProductCards(this.getMerchantVisibleItems());
-    }
-  }
-
-  changeMerchantQuantity(change) {
-    if (!this.merchantSelectedItem) return;
-    const available = this.getMerchantAvailableStock(this.merchantSelectedItem);
-    this.merchantBuyQuantity = Phaser.Math.Clamp(this.merchantBuyQuantity + change, available > 0 ? 1 : 0, available);
-    this.merchantQuantityText.setText(String(this.merchantBuyQuantity));
-    if (this.merchantQuantityInputElement) this.merchantQuantityInputElement.value = String(this.merchantBuyQuantity);
-  }
-
-  setMerchantQuantityToMax() {
-    if (!this.merchantSelectedItem) return;
-    this.merchantBuyQuantity = this.getMerchantAvailableStock(this.merchantSelectedItem);
-    this.merchantQuantityText.setText(String(this.merchantBuyQuantity));
-    if (this.merchantQuantityInputElement) this.merchantQuantityInputElement.value = String(this.merchantBuyQuantity);
-  }
-
-  /** 点击数量框后，直接在原位置输入数字；不再弹出浏览器白色输入框。 */
-  openMerchantQuantityInput() {
-    if (!this.merchantSelectedItem || this.merchantQuantityInputElement) return;
-    const canvas = this.game.canvas;
-    if (!canvas) return;
-    const canvasRect = canvas.getBoundingClientRect();
-    const scaleX = canvasRect.width / 1920;
-    const scaleY = canvasRect.height / 1080;
-    const input = document.createElement("input");
-    input.type = "text";
-    input.inputMode = "numeric";
-    input.value = String(this.merchantBuyQuantity);
-    input.setAttribute("aria-label", "购买数量");
-    // 输入框覆盖在画布原有数量框上，坐标会随 1920×1080 的等比缩放自动换算。
-    Object.assign(input.style, {
-      position: "fixed",
-      left: `${canvasRect.left + 1434 * scaleX}px`,
-      top: `${canvasRect.top + 643 * scaleY}px`,
-      width: `${156 * scaleX}px`,
-      height: `${50 * scaleY}px`,
-      boxSizing: "border-box",
-      zIndex: "9999",
-      background: "#1b1510",
-      border: `${Math.max(1, scaleX)}px solid #b58234`,
-      borderRadius: `${4 * scaleX}px`,
-      color: "#f8e8d3",
-      textAlign: "center",
-      fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
-      fontSize: `${22 * scaleY}px`,
-      outline: "none",
-      padding: "0",
-    });
-    const onlyNumbers = () => { input.value = input.value.replace(/[^0-9]/g, ""); };
-    input.addEventListener("input", onlyNumbers);
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        // 回车不仅确认数字，还会立刻把当前商品按该数量加入下方储物袋。
-        this.closeMerchantQuantityInput(true, true);
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        this.closeMerchantQuantityInput(false);
-      }
-    });
-    input.addEventListener("blur", () => this.closeMerchantQuantityInput(true));
-    document.body.appendChild(input);
-    this.merchantQuantityInputElement = input;
-    this.input.keyboard.enabled = false;
-    input.focus();
-    input.select();
-  }
-
-  /** 提交数量时自动限制在当前剩余库存内，避免输入 999 后出现超买。 */
-  closeMerchantQuantityInput(commit = true, addToCart = false) {
-    const input = this.merchantQuantityInputElement;
-    if (!input) return;
-    this.merchantQuantityInputElement = null;
-    if (commit && this.merchantSelectedItem) {
-      const available = this.getMerchantAvailableStock(this.merchantSelectedItem);
-      const entered = Number.parseInt(input.value, 10);
-      this.merchantBuyQuantity = Phaser.Math.Clamp(Number.isFinite(entered) ? entered : 1, available > 0 ? 1 : 0, available);
-      this.merchantQuantityText?.setText(String(this.merchantBuyQuantity));
-    }
-    input.remove();
-    this.input.keyboard.enabled = true;
-    if (commit && addToCart && this.merchantBuyQuantity > 0) this.purchaseMerchantItem();
-  }
-
-  /** 数量快捷键：1、10、全部都会立即把当前选中商品放入对应清单。 */
-  addSelectedMerchantQuantity(amount) {
-    if (!this.merchantSelectedItem) return;
-    const available = this.getMerchantAvailableStock(this.merchantSelectedItem);
-    if (available <= 0) {
-      this.merchantShopNotice.setText(this.merchantMode === "sell" ? "背包中没有足够的该物品" : "该商品已经售罄");
-      return;
-    }
-    this.merchantBuyQuantity = amount === "all" ? available : Math.min(Number(amount) || 1, available);
-    this.merchantQuantityText.setText(String(this.merchantBuyQuantity));
-    this.purchaseMerchantItem();
-  }
-
-  /** 左侧减号：从当前物品的购物清单中取消 1 个，不影响已经确认买下的物品。 */
-  removeSelectedMerchantQuantity() {
-    const item = this.merchantSelectedItem;
-    if (!item) return;
-    const cartEntry = this.merchantCart?.find((entry) => entry.item.id === item.id);
-    if (!cartEntry) {
-      this.merchantShopNotice.setText(`购物清单中没有 ${item.name}`);
-      return;
-    }
-    cartEntry.quantity -= 1;
-    if (cartEntry.quantity <= 0) this.merchantCart.splice(this.merchantCart.indexOf(cartEntry), 1);
-    this.merchantBuyQuantity = 1;
-    this.merchantQuantityText.setText("1");
-    this.merchantShopNotice.setText(`已从购物清单移除 ${item.name} × 1`);
-    playUiClickSound(this);
-    this.refreshMerchantCurrencies();
-    this.renderMerchantProductCards(this.getMerchantVisibleItems());
-    this.renderMerchantCart();
-  }
-
-  purchaseMerchantItem() {
-    const item = this.merchantSelectedItem;
-    if (!item) return;
-    const quantity = this.merchantBuyQuantity;
-    if (item.stock <= 0 || quantity <= 0) { this.merchantShopNotice.setText(this.merchantMode === "sell" ? "背包中没有足够的该物品" : "该商品已经售罄"); return; }
-    const cartEntry = this.merchantCart.find((entry) => entry.item.id === item.id);
-    const alreadyAdded = cartEntry?.quantity || 0;
-    if (alreadyAdded + quantity > item.stock) { this.merchantShopNotice.setText(this.merchantMode === "sell" ? "加入数量超过背包拥有数量" : "加入数量超过商人库存"); return; }
-    // 同一种物品只占一个格子；这里仅加入待购清单，还没有扣灵石或库存。
-    if (cartEntry) {
-      cartEntry.quantity += quantity;
-    } else {
-      this.merchantCart.push({ item: { ...item }, quantity });
-    }
-    this.merchantShopNotice.setText(`已加入 ${item.name} × ${quantity}，可在储物袋悬浮${this.merchantMode === "sell" ? "取消出售" : "取消购物"}`);
-    playUiClickSound(this);
-    this.selectMerchantItem(item, true);
-    this.refreshMerchantCurrencies();
-    this.renderMerchantProductCards(this.getMerchantVisibleItems());
-    this.renderMerchantCart();
-  }
-
-  getMerchantCartTotal() {
-    return (this.merchantCart || []).reduce((total, entry) => total + entry.item.price * entry.quantity, 0);
-  }
-
-  /** 点击“购买全部”先核对价格与获得物品，不会直接扣灵石。 */
-  openMerchantPurchaseConfirm() {
-    if (!this.merchantCart?.length) {
-      this.merchantShopNotice.setText("储物袋为空，请先把商品加入储物袋");
-      return;
-    }
-    const total = this.getMerchantCartTotal();
-    const selling = this.merchantMode === "sell";
-    this.merchantPurchaseTitle.setText(selling ? "确认出售" : "确认购买");
-    this.merchantPurchaseCostPrefix.setText(selling ? "将获得" : "将花费");
-    this.merchantPurchaseCostText.setText(`${total.toLocaleString("zh-CN")} 灵石`);
-    this.merchantPurchaseSummary.setText("");
-    this.renderMerchantPurchasePreview(this.merchantCart);
-    this.merchantPurchaseConfirm.setVisible(true).setAlpha(0);
-    this.tweens.add({ targets: this.merchantPurchaseConfirm, alpha: 1, duration: 130, ease: "Sine.Out" });
-  }
-
-  /** 确认框里的物品以卡片展示，内容随购物清单实时变化，而不是写死在背景图片中。 */
-  renderMerchantPurchasePreview(entries) {
-    if (!this.merchantPurchaseItemsLayer) return;
-    this.merchantPurchaseItemsLayer.removeAll(true);
-    const shown = entries.slice(0, 4);
-    const gap = 144;
-    const startCenterX = 960 - ((shown.length - 1) * gap) / 2;
-    shown.forEach((entry, index) => {
-      const centerX = startCenterX + index * gap;
-      const x = centerX - 52;
-      const y = 467;
-      const gradeColor = this.getMerchantGradeColor(entry.item.grade);
-      const frame = this.add.graphics();
-      frame.fillStyle(0x5b3b25, 1);
-      frame.fillRoundedRect(x, y, 105, 98, 6);
-      frame.fillStyle(gradeColor, 1);
-      frame.fillRoundedRect(x + 2, y + 2, 101, 94, 5);
-      frame.fillStyle(0x2e2117, 0.38);
-      frame.fillRoundedRect(x + 2, y + 2, 101, 94, 5);
-      frame.fillStyle(gradeColor, 0.18);
-      frame.fillRoundedRect(x + 6, y + 6, 93, 86, 4);
-      const icon = this.add.image(centerX, y + 49, entry.item.texture).setDisplaySize(80, 80);
-      const quantity = addText(this, x + 94, y + 8, String(entry.quantity), 14, "#d6d5ca", { strokeThickness: 1 }).setOrigin(1, 0);
-      const name = addText(this, centerX, y + 118, entry.item.name, 19, "#e7c88c", { strokeThickness: 0 }).setOrigin(0.5);
-      this.merchantPurchaseItemsLayer.add([frame, icon, quantity, name]);
-    });
-    if (entries.length > shown.length) {
-      const extra = addText(this, 960, 624, `另有 ${entries.length - shown.length} 种物品`, 15, "#b8a387", { strokeThickness: 0 }).setOrigin(0.5);
-      this.merchantPurchaseItemsLayer.add(extra);
-    }
-  }
-
-  closeMerchantPurchaseConfirm() {
-    this.merchantPurchaseConfirm?.setVisible(false);
-  }
-
-  /** 在确认弹窗中真正完成扣款、入背包与商人库存刷新。 */
-  confirmMerchantCartPurchase() {
-    const total = this.getMerchantCartTotal();
-    if (!this.merchantCart?.length) { this.closeMerchantPurchaseConfirm(); return; }
-    if (this.merchantMode === "buy" && (Number(gameState.player.spiritStones) || 0) < total) {
-      this.merchantPurchaseSummary.setText(`灵石不足：需要 ${total.toLocaleString("zh-CN")}，当前 ${(Number(gameState.player.spiritStones) || 0).toLocaleString("zh-CN")}`);
-      return;
-    }
-    for (const entry of this.merchantCart) {
-      const item = this.merchantItems.find((candidate) => candidate.id === entry.item.id);
-      const available = this.merchantMode === "sell" ? Number(gameState.player.inventory?.[entry.item.id]) || 0 : item?.stock;
-      if (!item || available < entry.quantity) {
-        this.merchantPurchaseSummary.setText(`${entry.item.name} 数量已经变化，请关闭弹窗后重新选择。`);
-        return;
-      }
-    }
-    if (this.merchantMode === "buy") gameState.player.spiritStones -= total;
-    else gameState.player.spiritStones += total;
-    gameState.world.merchantSpiritStones = this.merchantMode === "buy"
-      ? (Number(gameState.world.merchantSpiritStones) || 0) + total
-      : Math.max(0, (Number(gameState.world.merchantSpiritStones) || 0) - total);
-    gameState.world.merchantStock = gameState.world.merchantStock || {};
-    gameState.player.inventory = gameState.player.inventory || {};
-    this.merchantCart.forEach((entry) => {
-      const item = this.merchantItems.find((candidate) => candidate.id === entry.item.id);
-      item.stock += this.merchantMode === "buy" ? -entry.quantity : entry.quantity;
-      gameState.world.merchantStock[item.id] = item.stock;
-      gameState.player.inventory[item.id] = Math.max(0, (Number(gameState.player.inventory[item.id]) || 0) + (this.merchantMode === "buy" ? entry.quantity : -entry.quantity));
-    });
-    this.merchantCart = [];
-    this.merchantCarts[this.merchantMode] = this.merchantCart;
-    this.merchantCartScrollRow = 0;
-    this.merchantCancelButton?.setVisible(false);
-    this.closeMerchantPurchaseConfirm();
-    this.refreshMerchantCurrencies();
-    this.merchantShopNotice.setText(this.merchantMode === "buy"
-      ? `购买完成，花费 ◆ ${total.toLocaleString("zh-CN")}；售罄物品已从商人列表移除`
-      : `出售完成，获得 ◆ ${total.toLocaleString("zh-CN")} 灵石`);
-    const available = this.getMerchantVisibleItems().filter((item) => item.stock > 0);
-    if (available.length) this.selectMerchantItem(available[0], true);
-    this.renderMerchantProductCards(this.getMerchantVisibleItems());
-    this.renderMerchantCart();
-    playUiClickSound(this);
-    saveFirstChapterProgress();
-  }
-
-  renderMerchantCart() {
-    if (!this.merchantCartLayer) return;
-    this.merchantCartLayer.removeAll(true);
-    const totalRows = Math.ceil((this.merchantCart.length || 0) / 12);
-    const maxScrollRow = Math.max(0, totalRows - 2);
-    this.merchantCartScrollRow = Phaser.Math.Clamp(this.merchantCartScrollRow || 0, 0, maxScrollRow);
-    const startIndex = this.merchantCartScrollRow * 12;
-    for (let visibleIndex = 0; visibleIndex < 24; visibleIndex += 1) {
-      const column = visibleIndex % 12;
-      const row = Math.floor(visibleIndex / 12);
-      const x = 321 + column * 117;
-      const y = 752 + row * 108;
-      const index = startIndex + visibleIndex;
-      const entry = this.merchantCart[index];
-      // 储物袋和上方草药共用同一套物品框：深棕圆角底 → 棕色外框
-      // → 品阶色内底 + 内阴影。这样不会再出现两种不同的格子样式。
-      const slot = this.add.graphics();
-      // 空格也必须看得见：与储物袋大底分开一层深棕格，并保留细边线。
-      slot.fillStyle(0x36261c, 1);
-      slot.fillRoundedRect(x, y, 105, 98, 4);
-      slot.lineStyle(1, 0x5a402b, 1);
-      slot.strokeRoundedRect(x, y, 105, 98, 4);
-      if (entry) {
-        const gradeColor = this.getMerchantGradeColor(entry.item.grade);
-        slot.fillStyle(0x5b3b25, 1);
-        slot.fillRoundedRect(x, y, 105, 98, 6);
-        slot.fillStyle(gradeColor, 1);
-        slot.fillRoundedRect(x + 2, y + 2, 101, 94, 5);
-        // 与草药列表一致的柔和内阴影，保留品阶颜色但避免出现彩色描边。
-        slot.fillStyle(0x2e2117, 0.38);
-        slot.fillRoundedRect(x + 2, y + 2, 101, 94, 5);
-        slot.fillStyle(gradeColor, 0.18);
-        slot.fillRoundedRect(x + 6, y + 6, 93, 86, 4);
-        slot.fillStyle(gradeColor, 0.12);
-        slot.fillRoundedRect(x + 10, y + 10, 85, 78, 3);
-      }
-      const pieces = [slot];
-      if (entry) {
-        const icon = this.add.image(x + 52, y + 49, entry.item.texture).setDisplaySize(80, 80);
-        const count = addText(this, x + 94, y + 8, String(entry.quantity), 14, "#d6d5ca", { strokeThickness: 1 }).setOrigin(1, 0);
-        slot.setInteractive(new Phaser.Geom.Rectangle(x, y, 105, 98), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-        slot.on("pointerover", () => this.showMerchantCancelButton(index, x, y));
-        slot.on("pointerout", () => this.time.delayedCall(80, () => {
-          if (!this.merchantCancelHovered) this.merchantCancelButton?.setVisible(false);
-        }));
-        pieces.push(icon, count);
-      }
-      this.merchantCartLayer.add(pieces);
-    }
-    // 只有超过两行时才显示滚动条；它始终位于储物袋内，不会挤到右侧外框。
-    if (maxScrollRow > 0) {
-      const track = this.add.rectangle(1742, 855, 18, 206, 0x160f0b, 0.9).setStrokeStyle(1, 0x765538);
-      const thumbHeight = Math.max(42, 206 * (2 / totalRows));
-      const thumbY = 752 + thumbHeight / 2 + (206 - thumbHeight) * (this.merchantCartScrollRow / maxScrollRow);
-      const thumb = this.add.rectangle(1742, thumbY, 12, thumbHeight, 0xb7833f, 1).setStrokeStyle(1, 0xf4cf7d);
-      this.merchantCartLayer.add([track, thumb]);
-    }
-  }
-
-  /** 储物袋滚动区：位置固定在袋子内部，超过 24 格后才会生效。 */
-  isMerchantCartPointer(pointer) {
-    return pointer.x >= 298 && pointer.x <= 1774 && pointer.y >= 730 && pointer.y <= 976;
-  }
-
-  changeMerchantCartScroll(change) {
-    const totalRows = Math.ceil((this.merchantCart?.length || 0) / 12);
-    const maxScrollRow = Math.max(0, totalRows - 2);
-    const next = Phaser.Math.Clamp((this.merchantCartScrollRow || 0) + change, 0, maxScrollRow);
-    if (next === this.merchantCartScrollRow) return;
-    this.merchantCartScrollRow = next;
-    this.merchantCancelButton?.setVisible(false);
-    this.renderMerchantCart();
-  }
-
-  showMerchantCancelButton(index, x, y) {
-    this.merchantCancelIndex = index;
-    this.merchantCancelHovered = false;
-    const buttonX = x > 1500 ? x - 64 : x + 110;
-    this.merchantCancelButton.setPosition(buttonX, y + 49).setVisible(true);
-    this.merchantCancelButton.list[0].once("pointerover", () => { this.merchantCancelHovered = true; });
-    this.merchantCancelButton.list[0].once("pointerout", () => { this.merchantCancelHovered = false; this.merchantCancelButton.setVisible(false); });
-  }
-
-  cancelMerchantCartItem() {
-    const entry = this.merchantCart?.[this.merchantCancelIndex];
-    if (!entry) return;
-    this.merchantCart.splice(this.merchantCancelIndex, 1);
-    this.merchantShopNotice.setText(`已从${this.merchantMode === "sell" ? "出售" : "待购"}清单移除 ${entry.item.name} × ${entry.quantity}`);
-    this.merchantCancelButton.setVisible(false);
-    this.refreshMerchantCurrencies();
-    this.renderMerchantProductCards(this.getMerchantVisibleItems());
-    this.renderMerchantCart();
-  }
-
-  /** 商店的子容器层级较多，统一用固定 1920 坐标判断点击，避免点击被底层地图接走。 */
-  handleMerchantShopPointer(pointer) {
-    const { x, y } = pointer;
-    if (this.merchantPurchaseConfirm?.visible) {
-      this.handleMerchantPurchaseConfirmPointer(pointer);
-      return;
-    }
-    if (x >= 1732 && x <= 1776 && y >= 102 && y <= 146) { this.closeMerchantShop(); return; }
-    if (x >= 994 && x <= 1106 && y >= 102 && y <= 146) { this.setMerchantMode("buy"); return; }
-    if (x >= 1119 && x <= 1231 && y >= 102 && y <= 146) { this.setMerchantMode("sell"); return; }
-    const categoryButton = this.merchantCategoryButtons?.find((button) => (
-      x >= button.bg.x - 48 && x <= button.bg.x + 48
-      && y >= button.y - 23 && y <= button.y + 23
-    ));
-    if (categoryButton) {
-      this.selectMerchantCategory(categoryButton.name);
-      return;
-    }
-    if (this.merchantCancelButton?.visible && Math.abs(x - this.merchantCancelButton.x) <= 59 && Math.abs(y - this.merchantCancelButton.y) <= 30) {
-      this.cancelMerchantCartItem();
-      return;
-    }
-    if (x >= 147 && x <= 275 && y >= 830 && y <= 870) { this.openMerchantPurchaseConfirm(); return; }
-    // 商品区右侧的滚动条：点击轨道可跳转，按住后可上下拖动。
-    if (x >= 1308 && x <= 1332 && y >= 210 && y <= 718) {
-      const items = this.getMerchantScrollableProducts();
-      const { maxScrollRow } = this.getMerchantProductScrollMetrics(items);
-      if (maxScrollRow > 0) {
-        this.merchantProductScrollDragging = true;
-        this.updateMerchantProductScrollFromPointer(y);
-      }
-      return;
-    }
-    // 点击储物袋最右侧的滚动条，可以直接跳到对应的下拉行。
-    if (x >= 1727 && x <= 1757 && y >= 752 && y <= 958) {
-      const totalRows = Math.ceil((this.merchantCart?.length || 0) / 12);
-      const maxScrollRow = Math.max(0, totalRows - 2);
-      if (maxScrollRow > 0) {
-        this.merchantCartScrollRow = Phaser.Math.Clamp(Math.round(((y - 752) / 206) * maxScrollRow), 0, maxScrollRow);
-        this.merchantCancelButton?.setVisible(false);
-        this.renderMerchantCart();
-      }
-      return;
-    }
-    // 选中商品后：左侧减 1，右侧加 1；“全部”一次加入剩余库存。
-    if (x >= 1370 && x <= 1424 && y >= 643 && y <= 693) { this.removeSelectedMerchantQuantity(); return; }
-    if (x >= 1434 && x <= 1590 && y >= 643 && y <= 693) { this.openMerchantQuantityInput(); return; }
-    if (x >= 1600 && x <= 1654 && y >= 643 && y <= 693) { this.addSelectedMerchantQuantity(1); return; }
-    if (x >= 1691 && x <= 1765 && y >= 643 && y <= 693) { this.addSelectedMerchantQuantity("all"); return; }
-    const visibleItems = this.getMerchantScrollableProducts();
-    const { columns, visibleRows } = this.getMerchantProductScrollMetrics(visibleItems);
-    const startIndex = (this.merchantProductScrollRow || 0) * columns;
-    const shownItems = visibleItems.slice(startIndex, startIndex + columns * visibleRows);
-    for (let index = 0; index < shownItems.length; index += 1) {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const cardX = 300 + column * 255;
-      const cardY = 210 + row * 130;
-      if (x >= cardX && x <= cardX + 240 && y >= cardY && y <= cardY + 118) {
-        const item = shownItems[index];
-        if (this.merchantSelectedItem?.id === item.id) this.purchaseMerchantItem();
-        else this.selectMerchantItem(item);
-        return;
-      }
-    }
-  }
-
-  /** 确认层是最高层：点击确认或取消绝不会穿透到商店和大地图。 */
-  handleMerchantPurchaseConfirmPointer(pointer) {
-    const { x, y } = pointer;
-    if (x >= 971 && x <= 1099 && y >= 650 && y <= 690) { this.closeMerchantPurchaseConfirm(); return; }
-    if (x >= 824 && x <= 952 && y >= 650 && y <= 690) this.confirmMerchantCartPurchase();
-  }
-
-  /** 只有悬浮在储物袋内的实际物品上，才在该物品旁显示“取消购物”。 */
-  handleMerchantShopPointerMove(pointer) {
-    const { x, y } = pointer;
-    if (this.merchantProductScrollDragging) {
-      this.updateMerchantProductScrollFromPointer(y);
-      return;
-    }
-    const startIndex = (this.merchantCartScrollRow || 0) * 12;
-    for (let visibleIndex = 0; visibleIndex < 24; visibleIndex += 1) {
-      const index = startIndex + visibleIndex;
-      if (!this.merchantCart[index]) continue;
-      const column = visibleIndex % 12;
-      const row = Math.floor(visibleIndex / 12);
-      const slotX = 321 + column * 117;
-      const slotY = 752 + row * 108;
-      if (x >= slotX && x <= slotX + 105 && y >= slotY && y <= slotY + 98) {
-        this.showMerchantCancelButton(index, slotX, slotY);
-        return;
-      }
-    }
-    const overCancel = this.merchantCancelButton?.visible
-      && Math.abs(x - this.merchantCancelButton.x) <= 59
-      && Math.abs(y - this.merchantCancelButton.y) <= 30;
-    if (!overCancel) this.merchantCancelButton?.setVisible(false);
-  }
-
-  /** 读取玩家实际拥有的物品；商店购买后会立即在这里出现。 */
-  getStorageBagItems() {
-    const inventory = gameState.player.inventory || {};
-    return this.getMerchantItems()
-      .map((item) => ({ ...item, quantity: Math.max(0, Number(inventory[item.id]) || 0) }))
-      .filter((item) => item.quantity > 0);
-  }
-
-  getStorageBagVisibleItems() {
-    let items = this.getStorageBagItems();
-    if (this.storageBagCategory !== "全部") items = items.filter((item) => item.type === this.storageBagCategory);
-    if (this.storageBagGrade !== "全部") items = items.filter((item) => item.grade === this.storageBagGrade);
-    return items;
-  }
-
-  /**
-   * Pixso「储物袋」主界面：固定 1920 × 1080 坐标。
-   * 左侧是悬浮详情，右侧固定为 5 × 5 个 105 × 98 的物品格；超过五行才允许滚动。
-   */
-  createStorageBagPanel() {
-    const panel = this.add.container(0, 0).setScrollFactor(0).setDepth(2050).setVisible(false);
-    // 容器自身接收所有点击。Phaser 在缩放画布时会把 pointer.x/y 自动换算为
-    // 1920 × 1080 的游戏坐标，避免再次手动换算后造成关闭键和栏目点不到。
-    panel.setSize(SCREEN_WIDTH, SCREEN_HEIGHT).setInteractive({ useHandCursor: false });
-    panel.on("pointerdown", (pointer) => this.handleStorageBagPointer({ x: pointer.x, y: pointer.y }));
-    panel.on("pointermove", (pointer) => this.handleStorageBagPointerMove({ x: pointer.x, y: pointer.y }));
-    // 遮罩只负责变暗，不设为可交互对象；否则会盖住关闭键、分类按钮和物品悬浮区。
-    const shade = this.add.rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0x071009, 0.72).setOrigin(0);
-    const top = this.add.graphics();
-    top.fillStyle(0x0d0d0b, 0.94);
-    top.fillRect(0, 0, SCREEN_WIDTH, 145);
-    top.lineStyle(1, 0x4b4534, 0.9);
-    top.lineBetween(0, 144, SCREEN_WIDTH, 144);
-    panel.add([shade, top]);
-
-    // 顶部一级栏目：储物袋为选中态，其余栏目保留设计稿的可扩展入口。
-    const navLabels = ["储物袋", "属性", "法宝", "法术", "功法", "社交", "存档"];
-    const navStart = 304;
-    navLabels.forEach((label, index) => {
-      const x = navStart + index * 155;
-      if (index === 0) {
-        const selected = this.add.graphics();
-        selected.fillStyle(0x343727, 1);
-        selected.fillRoundedRect(x, 28, 144, 88, 8);
-        selected.fillStyle(0x383627, 0.72);
-        selected.fillRoundedRect(x + 2, 31, 140, 82, 7);
-        panel.add(selected);
-      }
-      const text = addText(this, x + 72, 72, label, 34, index === 0 ? "#ded1b1" : "#857f5a", {
-        stroke: "#252a1e",
-        strokeThickness: index === 0 ? 2 : 1,
-      }).setOrigin(0.5);
-      panel.add(text);
-    });
-    const close = this.add.graphics();
-    close.fillStyle(0x2a251d, 1);
-    close.fillRoundedRect(1760, 32, 80, 80, 8);
-    close.lineStyle(1, 0x746246, 1);
-    close.strokeRoundedRect(1760, 32, 80, 80, 8);
-    close.setInteractive(new Phaser.Geom.Rectangle(1760, 32, 80, 80), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-    close.on("pointerdown", () => this.closeStorageBag());
-    const closeText = addText(this, 1800, 72, "×", 36, "#ded1b1", { strokeThickness: 1 }).setOrigin(0.5);
-    panel.add([close, closeText]);
-
-    const title = addText(this, 960, 218, "储物袋", 38, "#f3d797", { strokeThickness: 1 }).setOrigin(0.5);
-    const subtitle = addText(this, 960, 260, "收纳途中所得的草药、书籍与装备", 17, "#8d7b70", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([title, subtitle]);
-
-    // 二级栏目：物品类型；右端“品级”打开按凡、灵、玄、地、天、仙、神器筛选的下拉栏。
-    this.storageBagCategoryButtons = [];
-    ["全部", "灵草", "书籍", "装备", "器材", "其他", "丹药"].forEach((name, index) => {
-      const x = 558 + index * 105;
-      const bg = this.add.image(x, 326, "merchant-category-normal").setDisplaySize(95, 45);
-      const text = addText(this, x, 325, name, 20, "#f2d1ab", { stroke: "#2a170d", strokeThickness: 1 }).setOrigin(0.5);
-      panel.add([bg, text]);
-      bg.setInteractive({ useHandCursor: true }).on("pointerdown", () => this.selectStorageBagCategory(name));
-      this.storageBagCategoryButtons.push({ name, x, bg, text });
-    });
-    const gradeButton = this.add.graphics();
-    gradeButton.fillStyle(0x4b3723, 1);
-    gradeButton.fillRoundedRect(1338, 304, 150, 45, 7);
-    gradeButton.lineStyle(1, 0x765438, 1);
-    gradeButton.strokeRoundedRect(1338, 304, 150, 45, 7);
-    gradeButton.setInteractive(new Phaser.Geom.Rectangle(1338, 304, 150, 45), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-    gradeButton.on("pointerdown", () => this.storageBagGradeMenu.setVisible(!this.storageBagGradeMenu.visible));
-    this.storageBagGradeButtonText = addText(this, 1413, 326, "品级：全部  ▾", 20, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([gradeButton, this.storageBagGradeButtonText]);
-
-    const infoBase = this.add.graphics();
-    infoBase.fillStyle(0x24170f, 0.98);
-    infoBase.fillRoundedRect(210, 390, 650, 485, 15);
-    const gridBase = this.add.graphics();
-    gridBase.fillStyle(0x1d120c, 0.92);
-    gridBase.fillRoundedRect(958, 390, 635, 570, 15);
-    panel.add([infoBase, gridBase]);
-
-    this.storageBagInfoLayer = this.add.container(0, 0).setVisible(false);
-    this.storageBagGridLayer = this.add.container(0, 0);
-    this.storageBagEmptyText = addText(this, 1275, 675, "储物袋中还没有物品", 22, "#8d7b70", { strokeThickness: 0 }).setOrigin(0.5).setVisible(false);
-    this.storageBagCapacityText = addText(this, 996, 992, "容量 0 / 100", 25, "#a98c70", { strokeThickness: 0 });
-    const stoneIcon = this.add.image(1430, 1004, "merchant-spirit-stone").setDisplaySize(12, 20);
-    this.storageBagStoneText = addText(this, 1447, 1004, "灵石 0", 25, "#ffbb7c", { strokeThickness: 0 }).setOrigin(0, 0.5);
-    const hint = addText(this, 1275, 938, "鼠标悬浮物品可查看详情", 15, "#8d7b70", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([this.storageBagInfoLayer, this.storageBagGridLayer, this.storageBagEmptyText, this.storageBagCapacityText, stoneIcon, this.storageBagStoneText, hint]);
-
-    this.storageBagGradeMenu = this.add.container(0, 0).setVisible(false);
-    const menuBg = this.add.graphics();
-    menuBg.fillStyle(0x24170f, 0.98);
-    menuBg.fillRoundedRect(1338, 356, 150, 334, 14);
-    menuBg.lineStyle(1, 0x5f472d, 1);
-    menuBg.strokeRoundedRect(1338, 356, 150, 334, 14);
-    this.storageBagGradeMenu.add(menuBg);
-    this.storageBagGradeOptions = [];
-    ["全部", "凡品", "灵品", "玄品", "地品", "天品", "仙品", "神器"].forEach((name, index) => {
-      const y = 379 + index * 40;
-      const option = this.add.graphics();
-      option.fillStyle(0x4b3723, 0.84);
-      option.fillRoundedRect(1348, y - 16, 130, 32, 5);
-      const label = addText(this, 1413, y, name, 18, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-      this.storageBagGradeMenu.add([option, label]);
-      option.setInteractive(new Phaser.Geom.Rectangle(1348, y - 16, 130, 32), Phaser.Geom.Rectangle.Contains, { useHandCursor: true });
-      option.on("pointerdown", () => this.selectStorageBagGrade(name));
-      this.storageBagGradeOptions.push({ name, y, option, label });
-    });
-    panel.add(this.storageBagGradeMenu);
-    this.storageBagPanel = panel;
-  }
-
+  // 角色菜单外壳统一装配储物袋、法宝和功法子页；场景入口只指定初始页签。
   openStorageBag() {
-    if (!this.storageBagPanel) this.createStorageBagPanel();
-    playUiClickSound(this);
-    this.target = null;
-    this.storageBagCategory = "全部";
-    this.storageBagGrade = "全部";
-    this.storageBagScrollRow = 0;
-    this.storageBagHoveredItemId = null;
-    this.storageBagGradeMenu.setVisible(false);
-    this.storageBagPanel.setAlpha(0).setVisible(true);
-    this.renderStorageBag();
-    this.tweens.add({ targets: this.storageBagPanel, alpha: 1, duration: 180, ease: "Sine.Out" });
-  }
-
-  closeStorageBag() {
-    if (!this.storageBagPanel?.visible) return;
-    playUiClickSound(this);
-    this.storageBagPanel.setVisible(false);
-    this.storageBagInfoLayer?.setVisible(false);
-    this.storageBagGradeMenu?.setVisible(false);
-    this.storageBagHoveredItemId = null;
-  }
-
-  selectStorageBagCategory(category) {
-    this.storageBagCategory = category;
-    this.storageBagScrollRow = 0;
-    this.storageBagCategoryButtons.forEach((button) => {
-      const active = button.name === category;
-      button.bg.setTexture(active ? "merchant-category-selected" : "merchant-category-normal");
-      button.text.setColor(active ? "#fff2c6" : "#f2d1ab");
-    });
-    this.storageBagInfoLayer.setVisible(false);
-    this.storageBagHoveredItemId = null;
-    this.renderStorageBag();
-  }
-
-  selectStorageBagGrade(grade) {
-    this.storageBagGrade = grade;
-    this.storageBagScrollRow = 0;
-    this.storageBagGradeButtonText.setText(`品级：${grade}  ▾`);
-    this.storageBagGradeMenu.setVisible(false);
-    this.storageBagInfoLayer.setVisible(false);
-    this.storageBagHoveredItemId = null;
-    this.renderStorageBag();
-  }
-
-  /** 重新绘制 25 个固定格位；格位保持 105 × 98，物品图片保持 80 × 80。 */
-  renderStorageBag() {
-    if (!this.storageBagGridLayer) return;
-    const items = this.getStorageBagVisibleItems();
-    const rows = Math.ceil(items.length / 5);
-    const maxScroll = Math.max(0, rows - 5);
-    this.storageBagScrollRow = Phaser.Math.Clamp(this.storageBagScrollRow || 0, 0, maxScroll);
-    const first = this.storageBagScrollRow * 5;
-    this.storageBagGridLayer.removeAll(true);
-    this.storageBagSlotItems = [];
-    for (let slotIndex = 0; slotIndex < 25; slotIndex += 1) {
-      const column = slotIndex % 5;
-      const row = Math.floor(slotIndex / 5);
-      const x = 978 + column * 117;
-      const y = 412 + row * 110;
-      const item = items[first + slotIndex];
-      const slot = this.add.graphics();
-      slot.fillStyle(0x36261c, 1);
-      slot.fillRoundedRect(x, y, 105, 98, 5);
-      slot.lineStyle(1, 0x4e3727, 1);
-      slot.strokeRoundedRect(x, y, 105, 98, 5);
-      // 用三层半透明深色模拟 Pixso 的 #2E2117、25px 模糊内阴影。
-      slot.fillStyle(0x2e2117, 0.55);
-      slot.fillRoundedRect(x + 3, y + 3, 99, 92, 4);
-      this.storageBagGridLayer.add(slot);
-      if (!item) continue;
-      const grade = this.add.graphics();
-      grade.fillStyle(this.getMerchantGradeColor(item.grade), 1);
-      grade.fillRoundedRect(x + 7, y + 7, 91, 84, 4);
-      grade.fillStyle(0x2e2117, 0.22);
-      grade.fillRoundedRect(x + 10, y + 10, 85, 78, 3);
-      const image = this.add.image(x + 52.5, y + 49, item.texture).setDisplaySize(80, 80);
-      const amount = addText(this, x + 94, y + 8, String(item.quantity), 14, "#c4c0b8", { stroke: "#2e2117", strokeThickness: 2 }).setOrigin(1, 0);
-      // 透明点击层只覆盖有物品的格子：悬浮显示详情，且不会让空格误触。
-      const hitArea = this.add.rectangle(x + 52.5, y + 49, 105, 98, 0xffffff, 0.001).setInteractive({ useHandCursor: true });
-      hitArea.on("pointerover", () => this.showStorageBagItemInfo(item));
-      hitArea.on("pointerout", () => {
-        this.storageBagHoveredItemId = null;
-        this.storageBagInfoLayer?.setVisible(false);
-      });
-      hitArea.on("pointerdown", () => {
-        playUiClickSound(this);
-        this.showStorageBagItemInfo(item);
-      });
-      this.storageBagGridLayer.add([grade, image, amount, hitArea]);
-      this.storageBagSlotItems.push({ item, x, y });
-    }
-    if (maxScroll > 0) {
-      const track = this.add.graphics();
-      track.fillStyle(0x17100b, 0.9);
-      track.fillRoundedRect(1568, 420, 10, 520, 5);
-      const thumbHeight = Math.max(72, 520 * (5 / rows));
-      const thumbY = 420 + (520 - thumbHeight) * (this.storageBagScrollRow / maxScroll);
-      track.fillGradientStyle(0x936e44, 0x936e44, 0x795738, 0x795738, 1);
-      track.fillRoundedRect(1568, thumbY, 10, thumbHeight, 5);
-      this.storageBagGridLayer.add(track);
-    }
-    this.storageBagEmptyText.setVisible(items.length === 0);
-    this.storageBagCapacityText.setText(`容量 ${items.length} / 100`);
-    this.storageBagStoneText.setText(`灵石 ${(Number(gameState.player.spiritStones) || 0).toLocaleString("zh-CN")}`);
-  }
-
-  showStorageBagItemInfo(item) {
-    if (!item || this.storageBagHoveredItemId === item.id) return;
-    this.storageBagHoveredItemId = item.id;
-    this.storageBagInfoLayer.removeAll(true).setVisible(true);
-    const card = this.add.graphics();
-    card.fillStyle(0x2c2418, 1);
-    card.fillRoundedRect(235, 415, 600, 435, 15);
-    const type = addText(this, 274, 452, `类型：${item.type}`, 20, "#d4ae7f", { strokeThickness: 0 });
-    const grade = addText(this, 795, 452, `品阶：${item.grade}`, 20, "#919090", { strokeThickness: 0 }).setOrigin(1, 0);
-    const frame = this.add.graphics();
-    frame.fillStyle(this.getMerchantGradeColor(item.grade), 1);
-    frame.fillRoundedRect(465, 492, 105, 98, 5);
-    frame.fillStyle(0x2e2117, 0.25);
-    frame.fillRoundedRect(469, 496, 97, 90, 4);
-    const image = this.add.image(517, 541, item.texture).setDisplaySize(80, 80);
-    const name = addText(this, 535, 626, item.name, 27, "#f8cf14", { strokeThickness: 1 }).setOrigin(0.5);
-    const description = addText(this, 286, 670, `物品说明：${item.description || "暂无说明"}`, 17, "#8d7b70", {
-      strokeThickness: 0,
-      wordWrap: { width: 500 },
-      lineSpacing: 8,
-    });
-    const quantity = addText(this, 535, 784, `持有数量：${item.quantity}`, 20, "#baa18c", { strokeThickness: 0 }).setOrigin(0.5);
-    const hint = addText(this, 535, 821, "左键选中  |  右键使用", 14, "#8d7b70", { strokeThickness: 0 }).setOrigin(0.5);
-    this.storageBagInfoLayer.add([card, type, grade, frame, image, name, description, quantity, hint]);
-  }
-
-  isStorageBagGridPointer(pointer) {
-    return pointer.x >= 958 && pointer.x <= 1593 && pointer.y >= 390 && pointer.y <= 960;
-  }
-
-  changeStorageBagScroll(change) {
-    const rows = Math.ceil(this.getStorageBagVisibleItems().length / 5);
-    const maxScroll = Math.max(0, rows - 5);
-    const next = Phaser.Math.Clamp((this.storageBagScrollRow || 0) + change, 0, maxScroll);
-    if (next === this.storageBagScrollRow) return;
-    this.storageBagScrollRow = next;
-    this.storageBagInfoLayer.setVisible(false);
-    this.storageBagHoveredItemId = null;
-    this.renderStorageBag();
-  }
-
-  handleStorageBagPointerMove(pointer) {
-    const points = this.getStorageBagPointerCandidates(pointer);
-    const hit = points.map((point) => this.storageBagSlotItems?.find((slot) => (
-      point.x >= slot.x && point.x <= slot.x + 105 && point.y >= slot.y && point.y <= slot.y + 98
-    ))).find(Boolean);
-    if (hit) this.showStorageBagItemInfo(hit.item);
-    else if (this.storageBagHoveredItemId) {
-      this.storageBagHoveredItemId = null;
-      this.storageBagInfoLayer.setVisible(false);
-    }
-  }
-
-  handleStorageBagPointer(pointer) {
-    // 不同浏览器会把 Phaser Pointer 保留成 CSS 像素或游戏设计像素；
-    // 同时检查两种坐标，保证缩放窗口时关闭键、分类和物品格都能点到。
-    const points = this.getStorageBagPointerCandidates(pointer);
-    const matches = (predicate) => points.some(predicate);
-    if (matches(({ x, y }) => x >= 1760 && x <= 1840 && y >= 32 && y <= 112)) { this.closeStorageBag(); return; }
-    const category = this.storageBagCategoryButtons?.find((button) => matches(({ x, y }) => x >= button.x - 48 && x <= button.x + 48 && y >= 303 && y <= 349));
-    if (category) { this.selectStorageBagCategory(category.name); return; }
-    if (matches(({ x, y }) => x >= 1338 && x <= 1488 && y >= 304 && y <= 349)) {
-      this.storageBagGradeMenu.setVisible(!this.storageBagGradeMenu.visible);
-      return;
-    }
-    if (this.storageBagGradeMenu?.visible) {
-      const option = this.storageBagGradeOptions.find((entry) => matches(({ x, y }) => x >= 1348 && x <= 1478 && y >= entry.y - 18 && y <= entry.y + 18));
-      if (option) { this.selectStorageBagGrade(option.name); return; }
-      this.storageBagGradeMenu.setVisible(false);
-    }
-    const hit = points.map((point) => this.storageBagSlotItems?.find((slot) => point.x >= slot.x && point.x <= slot.x + 105 && point.y >= slot.y && point.y <= slot.y + 98)).find(Boolean);
-    if (hit) {
-      playUiClickSound(this);
-      this.showStorageBagItemInfo(hit.item);
-    }
-  }
-
-  getStorageBagPointerCandidates(pointer) {
-    const raw = { x: Number(pointer?.x) || 0, y: Number(pointer?.y) || 0 };
-    const scaled = this.getUiPointer(raw);
-    const same = Math.abs(raw.x - scaled.x) < 0.5 && Math.abs(raw.y - scaled.y) < 0.5;
-    return same ? [raw] : [raw, scaled];
-  }
-
-  // 储物袋界面单独放在 ui/StorageBagPanel.js；场景这里只负责打开与转发输入。
-  openStorageBag() {
-    if (!this.storageBag) {
-      this.storageBag = new StorageBagPanel(this);
-    }
-    this.storageBag.open();
-    this.storageBagPanel = this.storageBag.panel;
+    this.characterMenu.open("储物袋");
   }
 
   /**
    * 从地图顶部“法宝”图标直接进入法宝页。
-   * 法宝页仍属于背包系统，因此不复制一套场景代码，只切换 StorageBagPanel 的标签状态。
+   * 法宝是角色菜单的独立子页，不经过储物袋页面实现。
    */
   openArtifactBag() {
-    if (!this.storageBag) {
-      this.storageBag = new StorageBagPanel(this);
-    }
-    this.storageBag.open("法宝");
-    this.storageBagPanel = this.storageBag.panel;
+    this.characterMenu.open("法宝");
+  }
+
+  /** 从顶部入口直接打开功法页；与法宝一样只负责界面装配。 */
+  openTechniqueBag() {
+    this.characterMenu.open("功法");
+  }
+
+  /** 法术是角色菜单的独立子页，不复用功能说明弹窗。 */
+  openSpellPanel() {
+    this.characterMenu.open("法术");
   }
 
   closeStorageBag() {
-    if (!this.storageBag) return;
-    this.storageBag.close();
-    this.storageBagPanel = this.storageBag.panel;
-  }
-
-  handleStorageBagPointer(pointer) {
-    this.storageBag?.handlePointer(pointer);
-  }
-
-  handleStorageBagPointerMove(pointer) {
-    this.storageBag?.handlePointerMove(pointer);
-  }
-
-  isStorageBagGridPointer(pointer) {
-    return this.storageBag?.isGridPointer(pointer) ?? false;
-  }
-
-  changeStorageBagScroll(change) {
-    this.storageBag?.scroll(change);
+    this.characterMenu.close();
   }
 
   /** 判断鼠标是否点在顶部 UI 区域，避免图标点击同时被误当成地图自动寻路。 */
@@ -2208,12 +981,12 @@ export class VillageScene extends Phaser.Scene {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.closeNearbyNpcProfile();
       return;
     }
-    if (this.storageBagPanel?.visible) {
+    if (this.characterMenu.visible) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.closeStorageBag();
       return;
     }
-    if (this.merchantShopPanel?.visible) {
-      if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.closeMerchantShop();
+    if (this.merchantPanel.visible) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.merchantPanel.close();
       return;
     }
     if (this.dialog.visible) {

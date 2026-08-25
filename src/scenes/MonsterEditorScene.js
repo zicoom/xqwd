@@ -2,6 +2,9 @@ import { getMonsterTemplates, normalizeMonster, saveMonsterTemplates } from "../
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
 import { addButton, addText, addTitle } from "../utils/UiHelpers.js";
+import { ItemCatalog } from "../domain/items/ItemCatalog.js";
+import { RewardCatalog } from "../domain/rewards/RewardCatalog.js";
+import { MonsterDropEditorPanel } from "../ui/editor/MonsterDropEditorPanel.js";
 
 /**
  * 怪物编辑器第一版。
@@ -19,6 +22,9 @@ export class MonsterEditorScene extends Phaser.Scene {
     rememberEditorRoute(SceneKeys.MONSTER_EDITOR);
     this.templates = getMonsterTemplates();
     this.selectedId = this.templates[0]?.id || null;
+    this.itemCatalog = new ItemCatalog();
+    this.rewardCatalog = new RewardCatalog({ itemCatalog: this.itemCatalog });
+    this.dropEditor = new MonsterDropEditorPanel({ scene: this, rewardCatalog: this.rewardCatalog });
     this.add.rectangle(960, 540, 1920, 1080, 0x10192c);
     addTitle(this, "怪物编辑器", "先创建怪物模板，再到地图编辑器中选择模板进行放置");
     this.createLeftList();
@@ -183,10 +189,13 @@ export class MonsterEditorScene extends Phaser.Scene {
 
   editDrops() {
     if (!this.selected) return;
-    const raw = window.prompt("掉落物用 | 分隔：", this.selected.drops.join("|"));
-    if (raw === null) return;
-    this.selected.drops = raw.split("|").map((item) => item.trim()).filter(Boolean);
-    this.refreshAll();
+    this.dropEditor.open({
+      drops: this.selected.drops,
+      onApply: (drops) => {
+        this.selected.drops = drops;
+        this.refreshAll();
+      },
+    });
   }
 
   /** 使用系统文件选择窗口读取图片，并把图片存进当前浏览器的怪物模板。 */

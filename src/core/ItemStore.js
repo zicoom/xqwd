@@ -5,8 +5,8 @@
  */
 const ITEM_STORE_KEY = "xuanqiong-wendao-item-templates-v1";
 
-// 编辑器与游戏内筛选统一使用这六类，材料包含炼器、炼丹等基础素材。
-export const ITEM_TYPES = ["灵草", "丹药", "功法", "书籍", "装备", "材料", "其他"];
+// 编辑器与游戏内筛选统一使用这些类型，材料包含炼器、炼丹等基础素材。
+export const ITEM_TYPES = ["灵草", "丹药", "功法", "法宝", "书籍", "装备", "材料", "其他"];
 export const ITEM_GRADES = ["凡品", "灵品", "玄品", "地品", "天品", "仙品", "神器"];
 // 物品抗性使用固定属性列表，避免编辑时手动填写造成名称不统一。
 export const RESISTANCE_TYPES = ["无", "全属性", "金", "木", "水", "火", "土", "风", "雷", "冰", "魔", "神"];
@@ -18,6 +18,7 @@ export const HERB_EFFECT_TYPES = ["炼丹材料", "恢复生命", "恢复修为"
 export const PILL_EFFECT_TYPES = ["恢复生命", "恢复修为", "解毒", "淬体强化", "突破辅助", "抗性提升"];
 export const BOOK_KINDS = ["功法秘籍", "法术书", "丹方", "炼器配方", "阵法图谱", "杂记"];
 export const TECHNIQUE_KINDS = ["心法", "法术", "身法", "秘术"];
+export const ARTIFACT_CATEGORIES = ["御剑", "防御", "属性", "攻击", "辅助", "抗性"];
 export const MATERIAL_PURPOSES = ["炼丹材料", "炼器材料", "锻造材料", "布阵材料", "任务材料", "其他"];
 export const OTHER_KINDS = ["任务物品", "货币", "凭证", "宝箱", "杂物"];
 
@@ -95,7 +96,16 @@ const BOOK_AND_TECHNIQUE_DEFAULT_ITEMS = [
   },
 ];
 
-const INITIAL_TEMPLATE_ITEMS = [...DEFAULT_ITEMS, ...BOOK_AND_TECHNIQUE_DEFAULT_ITEMS];
+// 战斗内置掉落也必须登记到统一物品目录，确保结算后能在储物袋真实显示。
+const BATTLE_REWARD_DEFAULT_ITEMS = [
+  { id: "material-low-tier", name: "低阶材料", type: "材料", grade: "凡品", price: 4, description: "常见的低阶炼制材料。", materialPurpose: "炼器材料", sellable: true },
+  { id: "material-wolf-pelt", name: "狼皮", type: "材料", grade: "凡品", price: 10, description: "山狼留下的完整皮毛。", materialPurpose: "锻造材料", sellable: true },
+  { id: "material-earth-crystal", name: "土灵晶", type: "材料", grade: "灵品", price: 80, description: "蕴含土属性灵力的晶石。", materialPurpose: "炼器材料", materialElement: "土", sellable: true },
+  { id: "pill-low-qi", name: "低阶回灵丹", type: "丹药", grade: "凡品", price: 35, description: "服用后恢复少量灵气。", pillEffect: "恢复修为", pillQiRestore: 10, restoreQi: 10, canUse: true, sellable: true },
+  { id: "quest-eclipse-token-fragment", name: "蚀月盟令牌残片", type: "其他", grade: "凡品", description: "蚀月盟令牌的一块残片，似乎与本章线索有关。", otherKind: "任务物品", otherTradable: "不可交易", sellable: false },
+];
+
+const INITIAL_TEMPLATE_ITEMS = [...DEFAULT_ITEMS, ...BOOK_AND_TECHNIQUE_DEFAULT_ITEMS, ...BATTLE_REWARD_DEFAULT_ITEMS];
 
 const clampNumber = (value, fallback = 0, min = 0, max = 999999) => {
   const number = Number(value);
@@ -162,6 +172,9 @@ export function normalizeItem(item = {}) {
     techniqueInitiative: clampNumber(item.techniqueInitiative, 0),
     techniqueLearnRealm: String(item.techniqueLearnRealm || "").trim(),
     techniqueLevelLimit: clampNumber(item.techniqueLevelLimit, 1, 1, 99),
+
+    // 法宝专属属性：类别同时决定角色菜单中的可装备槽位。
+    artifactCategory: pickChoice(item.artifactCategory, ARTIFACT_CATEGORIES, "辅助"),
 
     // 书籍 / 配方专属属性
     bookKind: pickChoice(item.bookKind, BOOK_KINDS, "功法秘籍"),

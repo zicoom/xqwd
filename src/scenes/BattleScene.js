@@ -1,8 +1,14 @@
 import { gameState, saveFirstChapterProgress } from "../core/GameState.js";
-import { getItemTemplate } from "../core/ItemStore.js";
 import { SceneKeys } from "../core/SceneKeys.js";
 import { addButton, addText } from "../utils/UiHelpers.js";
 import { configureFullHdScene } from "../core/DisplayConfig.js";
+import { ItemCatalog } from "../domain/items/ItemCatalog.js";
+import { SpellService } from "../domain/spells/SpellService.js";
+import { CombatEngine, calculatePlayerInitiative } from "../domain/combat/CombatEngine.js";
+import { BattleRewardService } from "../domain/rewards/BattleRewardService.js";
+
+const CHAPTER_ELITE_REWARDS = ["灵石 × 12", "低阶回灵丹 × 1", "蚀月盟令牌残片 × 1"];
+const DEFAULT_MONSTER_REWARDS = ["灵石 × 3", "低阶材料 × 1"];
 
 /**
  * 第一章基础回合战斗。
@@ -37,6 +43,15 @@ export class BattleScene extends Phaser.Scene {
 
   create() {
     configureFullHdScene(this);
+    this.itemCatalog = new ItemCatalog();
+    this.spellService = new SpellService({ player: gameState.player, catalog: this.itemCatalog });
+    this.rewardService = new BattleRewardService({
+      player: gameState.player,
+      world: gameState.world,
+      chapter: gameState.chapter,
+      catalog: this.itemCatalog,
+      save: saveFirstChapterProgress,
+    });
     const config = this.mapMonster?.battle;
     // 编辑器怪物若上传了图片，就在本场战斗使用该图片；
     // 没上传时继续使用默认噬魂魔蛛的 153 帧动作，保证旧内容不受影响。
@@ -54,15 +69,14 @@ export class BattleScene extends Phaser.Scene {
         soundUrl: config.soundUrl || "",
       }
       : { name: "噬魂魔蛛", hp: 52, maxHp: 52, attack: 8, defense: 2, qi: 20, maxQi: 20, skills: [{ name: "噬魂毒刺", damage: 8, qiCost: 0, cooldown: 0 }], soundUrl: "" };
-    // 键是技能名称，值是还剩多少回合冷却；每场战斗重新开始计算。
-    this.enemySkillCooldowns = {};
-    this.defending = false;
-    this.battleOver = false;
-    // 速度位功法提供“先手速度”。相等时仍优先主角，避免开局角色无操作可做。
-    this.playerInitiative = this.getPlayerInitiative();
-    this.enemyInitiative = Math.max(0, Number(config?.initiative) || 0);
-    this.isPlayerTurn = this.playerInitiative >= this.enemyInitiative;
-    this.round = 1;
+    this.combat = new CombatEngine({
+      player: gameState.player,
+      enemy: this.enemy,
+      // 速度位功法提供先手；相等时由引擎保证玩家先行动。
+      playerInitiative: calculatePlayerInitiative(gameState.player, this.itemCatalog),
+      enemyInitiative: Math.max(0, Number(config?.initiative) || 0),
+    });
+    this.enemy = this.combat.enemy;
     this.drawBattlefield();
     this.createStatusBars();
     this.createActionDeck();
@@ -76,14 +90,7 @@ export class BattleScene extends Phaser.Scene {
     this.input.keyboard.on("keydown-ESC", () => this.returnToVillage());
     this.updateBattleUi();
     // 只有敌方先手时，才在战场初始化完成后自动开始第一回合。
-    if (!this.isPlayerTurn) this.time.delayedCall(650, () => this.enemyTurn());
-  }
-
-  /** 读取速度位功法的先手加成；速度位为空时为 0。 */
-  getPlayerInitiative() {
-    const speedTechniqueId = gameState.player.equippedTechniques?.speed;
-    const speedTechnique = speedTechniqueId ? getItemTemplate(speedTechniqueId) : null;
-    return Math.max(0, Number(speedTechnique?.techniqueInitiative) || 0);
+    if (this.combat.turn === "enemy") this.time.delayedCall(650, () => this.enemyTurn());
   }
 
   /** 绘制战斗背景、双方角色和顶部回合提示。 */
@@ -202,15 +209,15 @@ export class BattleScene extends Phaser.Scene {
   }
 
   getSkillName() {
-    return { 金: "金刃术", 木: "青藤术", 水: "水箭术", 火: "火弹术", 土: "岩甲术" }[gameState.player.selectedElement];
+    return this.spellService.getInnateSpell().name;
   }
 
   /** 刷新生命、灵气、回合和法盘中央数值。 */
   updateBattleUi() {
     this.updateBars(this.playerBars, gameState.player.hp, gameState.player.maxHp, gameState.player.qi, gameState.player.maxQi);
     this.updateBars(this.enemyBars, this.enemy.hp, this.enemy.maxHp, this.enemy.qi, this.enemy.maxQi);
-    this.roundText.setText(`第 ${this.round} 回合`);
-    this.turnHint.setText(this.battleOver ? "战斗结束" : this.isPlayerTurn ? "你的回合 · 请选择行动" : "敌方行动中……");
+    this.roundText.setText(`第 ${this.combat.round} 回合`);
+    this.turnHint.setText(this.combat.battleOver ? "战斗结束" : this.combat.turn === "player" ? "你的回合 · 请选择行动" : "敌方行动中……");
     this.discQiText.setText(`${gameState.player.qi}\n/${gameState.player.maxQi}`);
   }
 
@@ -221,8 +228,6 @@ export class BattleScene extends Phaser.Scene {
     bars.qiText.setText(`${qi}/${maxQi}`);
   }
 
-  canPlayerAct() { return !this.battleOver && this.isPlayerTurn; }
-
   /**
    * 战斗测试需要可随时退出；普通地图怪物也允许退出，但不会获得掉落或标记为击败。
    * 奇异玉光测试返回时恢复状态，玩家可立刻重新进入下一场测试。
@@ -232,8 +237,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.isReturningToVillage) return;
     this.isReturningToVillage = true;
     if (this.isTestBattle) {
-      gameState.player.hp = gameState.player.maxHp;
-      gameState.player.qi = gameState.player.maxQi;
+      this.combat.restorePlayer();
     }
     // 保存离开战斗时的角色状态与地图坐标，刷新网页后仍会回到战斗前的位置。
     saveFirstChapterProgress();
@@ -241,40 +245,31 @@ export class BattleScene extends Phaser.Scene {
   }
 
   useSkill() {
-    if (!this.canPlayerAct()) return;
-    if (gameState.player.qi < 8) return this.setLog("灵气不足，无法施放术法！请防御恢复灵气或普通攻击。", "#b84c3e");
-    this.beginPlayerAction();
-    gameState.player.qi -= 8;
-    const damage = Math.max(1, gameState.player.attack + 8 - this.enemy.defense);
+    const prepared = this.combat.preparePlayerSkill({ name: this.getSkillName(), qiCost: 8, damageBonus: 8 });
+    if (!prepared.ok) return this.setLog(prepared.message, "#b84c3e");
+    this.updateBattleUi();
     this.playSkillAnimation(() => {
-      this.enemy.hp = Math.max(0, this.enemy.hp - damage);
-      this.setLog(`${gameState.player.name}施放${this.getSkillName()}，造成 ${damage} 点伤害！`, "#b84c3e");
+      const result = this.combat.resolvePlayerAction(prepared.action);
+      this.setLog(`${gameState.player.name}施放${this.getSkillName()}，造成 ${result.damage} 点伤害！`, "#b84c3e");
     });
   }
 
   normalAttack() {
-    if (!this.beginPlayerAction()) return;
-    const damage = Math.max(1, gameState.player.attack - this.enemy.defense + Phaser.Math.Between(0, 3));
+    const prepared = this.combat.preparePlayerNormalAttack();
+    if (!prepared.ok) return;
+    this.updateBattleUi();
     this.playNormalAttackAnimation(() => {
-      this.enemy.hp = Math.max(0, this.enemy.hp - damage);
-      this.setLog(`${gameState.player.name}使用基础武器攻击，造成 ${damage} 点伤害。`);
+      const result = this.combat.resolvePlayerAction(prepared.action);
+      this.setLog(`${gameState.player.name}使用基础武器攻击，造成 ${result.damage} 点伤害。`);
     });
   }
 
   defend() {
-    if (!this.beginPlayerAction()) return;
-    this.defending = true;
-    gameState.player.qi = Math.min(gameState.player.maxQi, gameState.player.qi + 5);
+    const prepared = this.combat.preparePlayerDefend({ qiRecovery: 5 });
+    if (!prepared.ok) return;
     this.setLog("你选择防御：本回合减伤，并恢复 5 点灵气。", "#3c7666");
-    this.afterPlayerAction();
-  }
-
-  /** 玩家选择行动后立刻锁定本回合，直到动画播放完毕才允许敌方行动。 */
-  beginPlayerAction() {
-    if (!this.canPlayerAct()) return false;
-    this.isPlayerTurn = false;
     this.updateBattleUi();
-    return true;
+    this.afterPlayerAction();
   }
 
   /**
@@ -349,32 +344,21 @@ export class BattleScene extends Phaser.Scene {
   }
 
   afterPlayerAction() {
-    this.isPlayerTurn = false;
     this.updateBattleUi();
-    if (this.enemy.hp <= 0) return this.winBattle();
+    if (this.combat.winner === "player") return this.winBattle();
     this.time.delayedCall(700, () => this.enemyTurn());
   }
 
   enemyTurn() {
-    if (this.battleOver) return;
-    Object.keys(this.enemySkillCooldowns).forEach((name) => {
-      this.enemySkillCooldowns[name] = Math.max(0, this.enemySkillCooldowns[name] - 1);
-    });
-    const usableSkills = this.enemy.skills.filter((skill) =>
-      this.enemy.qi >= skill.qiCost && (this.enemySkillCooldowns[skill.name] || 0) === 0,
-    );
-    const skill = usableSkills.length ? Phaser.Utils.Array.GetRandom(usableSkills) : null;
-    if (skill) {
-      this.enemy.qi -= skill.qiCost;
-      this.enemySkillCooldowns[skill.name] = skill.cooldown;
-    }
-    const rawDamage = Math.max(1, (skill?.damage ?? this.enemy.attack) - gameState.player.defense + Phaser.Math.Between(0, 3));
-    const damage = this.defending ? Math.ceil(rawDamage * 0.5) : rawDamage;
+    const prepared = this.combat.prepareEnemyAction();
+    if (!prepared.ok) return;
+    const { action } = prepared;
+    const skill = action.skill;
+    this.updateBattleUi();
     const onImpact = () => {
-      gameState.player.hp = Math.max(0, gameState.player.hp - damage);
-      this.defending = false;
+      const result = this.combat.resolveEnemyAction(action);
       this.playEnemySound();
-      this.setLog(`${this.enemy.name}${skill ? `施展${skill.name}` : "发起攻击"}，造成 ${damage} 点伤害。`, "#b84c3e");
+      this.setLog(`${this.enemy.name}${skill ? `施展${skill.name}` : "发起攻击"}，造成 ${result.damage} 点伤害。`, "#b84c3e");
       this.updateBattleUi();
     };
     // 有技能时播放施法画面；没有可用技能时则播放向前扑击的普通攻击动作。
@@ -451,19 +435,16 @@ export class BattleScene extends Phaser.Scene {
 
   /** 敌方动作、伤害结算完成后，判断胜负或把回合交还给玩家。 */
   finishEnemyTurn() {
-    if (gameState.player.hp <= 0) {
-      this.battleOver = true;
+    if (this.combat.winner === "enemy") {
       this.setLog("你在第一章原型中败退了。按 R 重试本场战斗。", "#b84c3e");
       this.input.keyboard.once("keydown-R", () => {
-        gameState.player.hp = gameState.player.maxHp;
-        gameState.player.qi = gameState.player.maxQi;
+        this.combat.restorePlayer();
         this.scene.restart();
       });
       this.updateBattleUi();
       return;
     }
-    this.round += 1;
-    this.isPlayerTurn = true;
+    this.combat.finishEnemyTurn();
     this.updateBattleUi();
   }
 
@@ -479,22 +460,27 @@ export class BattleScene extends Phaser.Scene {
   }
 
   winBattle() {
-    this.battleOver = true;
-    // 编辑器怪物胜利后，记入当前角色存档；返回地图时它就不会重复刷新。
-    if (this.mapMonster) {
-      if (!gameState.world.defeatedMonsterIds.includes(this.mapMonster.id)) {
-        gameState.world.defeatedMonsterIds.push(this.mapMonster.id);
-      }
-      saveFirstChapterProgress();
-      const drops = this.mapMonster.drops?.join("、") || "灵石 × 3、低阶材料 × 1";
-      this.setLog(`${this.enemy.name}被击败，掉落：${drops}。\n2 秒后返回青云山。`, "#87642d");
+    // 测试战斗只验证战斗配置，不产生奖励、任务进度或永久生命损失。
+    if (this.isTestBattle) {
+      this.combat.restorePlayer();
+      this.setLog(`${this.enemy.name}被击败；测试战斗不结算奖励。\n2 秒后返回青云山。`, "#87642d");
       this.updateBattleUi();
       this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
       return;
     }
-    gameState.chapter.eliteDefeated = true;
-    saveFirstChapterProgress();
-    this.setLog("劫修倒下，掉落：灵石 × 12、低阶回灵丹 × 1、蚀月盟令牌残片 × 1。", "#87642d");
+
+    if (this.mapMonster) {
+      const result = this.rewardService.settleVictory({
+        monsterId: this.mapMonster.id,
+        rewards: this.mapMonster.drops?.length ? this.mapMonster.drops : DEFAULT_MONSTER_REWARDS,
+      });
+      this.setLog(`${this.enemy.name}被击败，实际获得：${result.rewardText || result.message}。\n2 秒后返回青云山。`, "#87642d");
+      this.updateBattleUi();
+      this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
+      return;
+    }
+    const result = this.rewardService.settleVictory({ rewards: CHAPTER_ELITE_REWARDS, chapterElite: true });
+    this.setLog(`劫修倒下，实际获得：${result.rewardText || result.message}。`, "#87642d");
     this.updateBattleUi();
     this.time.delayedCall(1800, () => this.scene.start(SceneKeys.RESULT));
   }

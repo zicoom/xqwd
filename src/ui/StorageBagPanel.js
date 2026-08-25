@@ -1,15 +1,22 @@
 import { gameState, saveFirstChapterProgress } from "../core/GameState.js";
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { addText, playUiClickSound } from "../utils/UiHelpers.js";
+import { ItemCatalog } from "../domain/items/ItemCatalog.js";
+import { InventoryService } from "../domain/inventory/InventoryService.js";
 
 /**
- * 储物袋独立界面。
- * 所有布局均使用 1920 × 1080 设计坐标，避免与地图场景逻辑混在一起。
+ * 角色菜单中的储物袋子页，只负责物品展示与交互。
+ * 一级导航和菜单生命周期由 CharacterMenuPanel 负责。
  */
 export class StorageBagPanel {
-  constructor(scene) {
+  constructor(scene, services = {}) {
     this.scene = scene;
-    this.panel = null;
+    this.parent = services.parent;
+    this.catalog = services.catalog || scene.itemCatalog || new ItemCatalog();
+    this.inventoryService = services.inventoryService || scene.inventoryService || new InventoryService({
+      player: gameState.player,
+      save: saveFirstChapterProgress,
+    });
     this.category = "全部";
     this.grade = "全部";
     this.scrollRow = 0;
@@ -23,23 +30,10 @@ export class StorageBagPanel {
     this.actionMenuItem = null;
     this.useResultLayer = null;
     this.sortByGradeAscending = false;
-    // 同一张全屏界面内切换“储物袋”和“法宝”，避免为法宝另建场景造成重复逻辑。
-    this.activeTab = "储物袋";
-    this.navSelection = null;
-    this.navLabels = [];
     this.storageLayer = null;
-    this.artifactLayer = null;
-    this.artifactCategory = "攻击";
-    this.artifactCategoryButtons = [];
-    // 功法页与法宝页同用木框，但拥有独立的装备栏与功法库。
-    this.techniqueLayer = null;
-    this.techniqueSlotButtons = [];
-    this.techniqueGridLayer = null;
-    this.techniqueLibrarySlots = [];
-    this.selectedTechniqueSlot = "main";
   }
 
-  get visible() { return Boolean(this.panel?.visible); }
+  get visible() { return Boolean(this.storageLayer?.visible); }
 
   getGradeColor(grade) {
     return ({ "凡品": 0x414040, "灵品": 0x285c45, "玄品": 0x294e71, "地品": 0x70471d, "天品": 0x653962, "仙品": 0x9a6920, "神器": 0x8b3b37 })[grade] || 0x414040;
@@ -53,14 +47,11 @@ export class StorageBagPanel {
   }
 
   getItems() {
-    const inventory = gameState.player.inventory || {};
     const gradeOrder = ["神器", "仙品", "天品", "地品", "玄品", "灵品", "凡品"];
     const gradeAscendingOrder = ["凡品", "灵品", "玄品", "地品", "天品", "仙品", "神器"];
     const typeOrder = ["丹药", "灵草", "功法", "法宝", "装备", "书籍", "材料", "其他"];
     const normalizedType = (type) => type === "器材" ? "材料" : type;
-    return this.scene.getMerchantItems()
-      .map((item) => ({ ...item, quantity: Math.max(0, Number(inventory[item.id]) || 0) }))
-      .filter((item) => item.quantity > 0)
+    return this.catalog.ownedBy(gameState.player)
       .filter((item) => this.category === "全部" || normalizedType(item.type) === this.category)
       .filter((item) => this.grade === "全部" || item.grade === this.grade)
       .sort((left, right) => {
@@ -92,44 +83,9 @@ export class StorageBagPanel {
     const bagY = this.bagOffsetY;
     const headerY = this.headerOffsetY;
     const titleY = this.titleOffsetY;
-    const panel = scene.add.container(0, 0).setScrollFactor(0).setDepth(2050).setVisible(false);
-    panel.setSize(SCREEN_WIDTH, SCREEN_HEIGHT).setInteractive({ useHandCursor: false });
-    // 点击与悬浮统一由 VillageScene 转发，避免同一次右键被处理两次。
-
-    // 用户提供的 1920 × 1080 背景，按原始尺寸一比一铺满。
-    const backdrop = scene.add.image(960, 540, "storage-background").setDisplaySize(1920, 1080);
-    panel.add(backdrop);
-
-    // 一级栏目，尺寸取自 Pixso：选中标签 244 × 88，顶部条高 145。
-    const nav = scene.add.graphics();
-    nav.fillStyle(0x071213, 0.3);
-    nav.fillRect(0, 0, SCREEN_WIDTH, 145);
-    nav.lineStyle(1, 0x39504a, 0.75);
-    nav.lineBetween(0, 144, SCREEN_WIDTH, 144);
-    panel.add(nav);
-    // 选中底框独立保存；切换到法宝页时可平滑移动到“法宝”栏目下。
-    this.navSelection = scene.add.graphics();
-    panel.add(this.navSelection);
-    this.navEntries = [
-      ["属性", 335], ["储物袋", 558], ["法宝", 768], ["法术", 922],
-      ["功法", 1075], ["社交", 1228], ["存档", 1382],
-    ];
-    this.navEntries.forEach(([label, x]) => {
-      const text = addText(scene, x, 72, label, 30, "#aa9a65", { strokeThickness: 0 }).setOrigin(0.5);
-      panel.add(text);
-      this.navLabels.push({ label, x, text });
-    });
-    const close = scene.add.graphics();
-    close.fillStyle(0x332d25, 1);
-    close.fillRoundedRect(1769, 40, 64, 64, 8);
-    close.lineStyle(1, 0xa99763, 1);
-    close.strokeRoundedRect(1769, 40, 64, 64, 8);
-    const closeLabel = addText(scene, 1801, 72, "×", 34, "#eadfbf", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([close, closeLabel]);
-
-    // 储物袋与法宝页各自拥有独立容器，切换时不会出现旧界面残留在新界面的情况。
-    this.storageLayer = scene.add.container(0, 0);
-    panel.add(this.storageLayer);
+    if (!this.parent) throw new Error("StorageBagPanel 需要 CharacterMenuPanel 提供父容器");
+    this.storageLayer = scene.add.container(0, 0).setVisible(false);
+    this.parent.add(this.storageLayer);
 
     // 主角立绘位于左侧底部，保持在资料卡的后方，不遮挡物品详情。
     const playerPortrait = scene.add.image(430, 1080, "player-dialogue-portrait")
@@ -223,297 +179,9 @@ export class StorageBagPanel {
     });
     this.storageLayer.add(this.gradeMenu);
 
-    // 法宝页只负责展示与整理法宝；其内容和普通物品背包严格分层。
-    this.panel = panel;
-    this.createArtifactPage();
-    this.createTechniquePage();
-
     // 右键菜单不使用浏览器原生菜单，所有操作都在游戏界面内完成。
     this.createItemActionMenu();
     this.createUseResultPopup();
-  }
-
-  /**
-   * 创建 Pixso「储物袋-法宝」页。
-   * 设计稿以 1920 × 1080 为基础：木框完全使用用户提供的 860 × 638 原图，
-   * 左侧六种法宝定位与右侧 5 × 2 格子均按设计稿坐标摆放，不能随意拉伸。
-   */
-  createArtifactPage() {
-    const scene = this.scene;
-    const layer = scene.add.container(0, 0).setVisible(false);
-    this.panel.add(layer);
-    this.artifactLayer = layer;
-
-    // 原图坐标：右侧法宝框左上角为 (944, 273)，保持 860 × 638 原始像素尺寸。
-    const frame = scene.add.image(1374, 592, "artifact-frame").setDisplaySize(860, 638);
-    layer.add(frame);
-
-    // 六个法宝定位。图标素材尚未单独提供时，先使用统一的“灵韵底座”占位；
-    // 以后只替换该位置的图片，不会影响标签、间距与点击区域。
-    const categoryLayout = [
-      { name: "御剑", x: 530, y: 325 },
-      { name: "防御", x: 362, y: 489 },
-      { name: "属性", x: 690, y: 489 },
-      { name: "攻击", x: 530, y: 632 },
-      { name: "辅助", x: 362, y: 775 },
-      { name: "抗性", x: 690, y: 775 },
-    ];
-    this.artifactCategoryButtons = categoryLayout.map((entry) => {
-      const holder = scene.add.graphics();
-      // 105 × 104 的图标容器与 Pixso 中的法宝展示位尺寸相同。
-      holder.fillStyle(0x725a38, 0.92);
-      holder.fillRoundedRect(entry.x - 53, entry.y - 52, 106, 104, 9);
-      holder.fillStyle(0x5a452b, 0.94);
-      holder.fillCircle(entry.x, entry.y, 42);
-      holder.lineStyle(1, 0xe4cc8a, 0.72);
-      holder.strokeRoundedRect(entry.x - 53, entry.y - 52, 106, 104, 9);
-      const label = scene.add.image(entry.x, entry.y + 69, "artifact-category-label").setDisplaySize(90, 33);
-      const text = addText(scene, entry.x, entry.y + 68, entry.name, 20, "#5e440d", { strokeThickness: 0 }).setOrigin(0.5);
-      layer.add([holder, label, text]);
-      return { ...entry, holder, label, text };
-    });
-
-    // 右侧固定 5 × 2 格：每格 105 × 104，横向间距 24px、纵向间距 26px。
-    this.artifactGridLayer = scene.add.container(0, 0);
-    layer.add(this.artifactGridLayer);
-    this.artifactEmptyText = addText(scene, 1435, 626, "暂无已装备法宝", 21, "#a98c70", { strokeThickness: 0 })
-      .setOrigin(0.5)
-      .setVisible(false);
-    layer.add(this.artifactEmptyText);
-
-    // 原木框下沿已预留容量栏，只补充文字与可点击的“整理”功能。
-    this.artifactCapacityText = addText(scene, 1443, 881, "0 / 100", 20, "#d7be90", { strokeThickness: 0 }).setOrigin(0.5);
-    const sortBackground = scene.add.graphics();
-    sortBackground.fillStyle(0x5a3a20, 0.93);
-    sortBackground.fillRoundedRect(1564, 854, 123, 52, 7);
-    sortBackground.lineStyle(1, 0x976331, 0.9);
-    sortBackground.strokeRoundedRect(1564, 854, 123, 52, 7);
-    const sortText = addText(scene, 1625.5, 880, "整理", 20, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-    layer.add([this.artifactCapacityText, sortBackground, sortText]);
-  }
-
-  /** 返回玩家背包中实际拥有的法宝；不会凭空把未获得物品塞进正式背包。 */
-  getArtifactItems() {
-    const inventory = gameState.player.inventory || {};
-    return this.scene.getMerchantItems()
-      .map((item) => ({ ...item, quantity: Math.max(0, Number(inventory[item.id]) || 0) }))
-      .filter((item) => item.quantity > 0 && item.type === "法宝")
-      .filter((item) => !item.artifactCategory || item.artifactCategory === this.artifactCategory);
-  }
-
-  /** 根据当前分类重新绘制法宝格与其数量。 */
-  renderArtifact() {
-    if (!this.artifactLayer) return;
-    const items = this.getArtifactItems();
-    this.artifactGridLayer.removeAll(true);
-    const columns = 5;
-    const rows = 2;
-    const slotWidth = 105;
-    const slotHeight = 104;
-    const startX = 1060;
-    const startY = 334;
-    const gapX = 24;
-    const gapY = 26;
-    for (let index = 0; index < columns * rows; index += 1) {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const x = startX + column * (slotWidth + gapX);
-      const y = startY + row * (slotHeight + gapY);
-      const item = items[index];
-      const slot = this.scene.add.graphics();
-      slot.fillStyle(0x36261c, 0.94);
-      slot.fillRoundedRect(x, y, slotWidth, slotHeight, 5);
-      slot.lineStyle(1, 0x715033, 0.86);
-      slot.strokeRoundedRect(x, y, slotWidth, slotHeight, 5);
-      this.artifactGridLayer.add(slot);
-      if (!item) continue;
-      const itemIcon = this.scene.add.image(x + slotWidth / 2, y + 47, item.texture).setDisplaySize(78, 78);
-      const name = addText(this.scene, x + slotWidth / 2, y + 88, item.name, 14, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-      const amount = addText(this.scene, x + 96, y + 10, String(item.quantity), 15, "#ffe0a0", { strokeThickness: 0 }).setOrigin(1, 0.5);
-      this.artifactGridLayer.add([itemIcon, name, amount]);
-    }
-    this.artifactEmptyText.setVisible(!items.length);
-    this.artifactCapacityText.setText(`${items.length} / 100`);
-    this.artifactCategoryButtons.forEach((button) => {
-      const selected = button.name === this.artifactCategory;
-      button.holder.clear();
-      button.holder.fillStyle(selected ? 0x9d7a40 : 0x725a38, selected ? 1 : 0.92);
-      button.holder.fillRoundedRect(button.x - 53, button.y - 52, 106, 104, 9);
-      button.holder.fillStyle(selected ? 0x655025 : 0x5a452b, 0.96);
-      button.holder.fillCircle(button.x, button.y, 42);
-      button.holder.lineStyle(1, selected ? 0xffe19a : 0xe4cc8a, selected ? 1 : 0.72);
-      button.holder.strokeRoundedRect(button.x - 53, button.y - 52, 106, 104, 9);
-      button.text.setColor(selected ? "#4e310a" : "#5e440d");
-    });
-  }
-
-  /** 切换顶部标签，只有储物袋、法宝已有可运行的完整页面。 */
-  setActiveTab(tab) {
-    const nextTab = ["储物袋", "法宝", "功法"].includes(tab) ? tab : "储物袋";
-    this.activeTab = nextTab;
-    const selectedEntry = this.navEntries.find(([label]) => label === nextTab) || this.navEntries[1];
-    this.navSelection.clear();
-    this.navSelection.fillStyle(0x3a3a29, 1);
-    this.navSelection.fillRoundedRect(selectedEntry[1] - 100, 34, 200, 76, 8);
-    this.navSelection.lineStyle(1, 0xa99763, 1);
-    this.navSelection.strokeRoundedRect(selectedEntry[1] - 100, 34, 200, 76, 8);
-    this.navLabels.forEach((entry) => entry.text.setColor(entry.label === nextTab ? "#f2e2b5" : "#aa9a65"));
-    this.storageLayer.setVisible(nextTab === "储物袋");
-    this.artifactLayer.setVisible(nextTab === "法宝");
-    this.techniqueLayer.setVisible(nextTab === "功法");
-    this.gradeMenu.setVisible(false);
-    this.closeItemActionMenu();
-    this.useResultLayer?.setVisible(false);
-    if (nextTab === "法宝") this.renderArtifact();
-    else if (nextTab === "功法") this.renderTechniquePage();
-    else this.render();
-  }
-
-  /**
-   * 功法页：沿用法宝的 860 × 638 木框，左边固定放装备位，右边显示玩家实际拥有的功法。
-   * 1 个主修、4 个辅修与 1 个速度位均只保存功法 id，不会消耗背包里的功法。
-   */
-  createTechniquePage() {
-    const scene = this.scene;
-    const layer = scene.add.container(0, 0).setVisible(false);
-    this.panel.add(layer);
-    this.techniqueLayer = layer;
-
-    // 与法宝页严格共用用户提供的原始木框，尺寸不可缩放。
-    layer.add(scene.add.image(1374, 592, "artifact-frame").setDisplaySize(860, 638));
-
-    const slotLayout = [
-      { id: "speed", label: "速度", x: 530, y: 325, hint: "战斗先手" },
-      { id: "auxiliary-0", label: "辅修", x: 362, y: 489, hint: "辅助功法" },
-      { id: "auxiliary-1", label: "辅修", x: 690, y: 489, hint: "辅助功法" },
-      { id: "main", label: "主修", x: 530, y: 632, hint: "核心功法" },
-      { id: "auxiliary-2", label: "辅修", x: 362, y: 775, hint: "辅助功法" },
-      { id: "auxiliary-3", label: "辅修", x: 690, y: 775, hint: "辅助功法" },
-    ];
-    this.techniqueSlotButtons = slotLayout.map((entry) => {
-      const holder = scene.add.graphics();
-      const labelBg = scene.add.image(entry.x, entry.y + 69, "artifact-category-label").setDisplaySize(90, 33);
-      const label = addText(scene, entry.x, entry.y + 68, entry.label, 20, "#5e440d", { strokeThickness: 0 }).setOrigin(0.5);
-      const iconLayer = scene.add.container(entry.x, entry.y);
-      layer.add([holder, iconLayer, labelBg, label]);
-      return { ...entry, holder, labelBg, label, iconLayer };
-    });
-
-    this.techniqueGridLayer = scene.add.container(0, 0);
-    layer.add(this.techniqueGridLayer);
-    this.techniqueEmptyText = addText(scene, 1435, 626, "背包中暂无功法", 21, "#a98c70", { strokeThickness: 0 }).setOrigin(0.5);
-    this.techniqueCapacityText = addText(scene, 1443, 881, "0 / 100", 20, "#d7be90", { strokeThickness: 0 }).setOrigin(0.5);
-    const sortBg = scene.add.graphics();
-    sortBg.fillStyle(0x5a3a20, 0.93);
-    sortBg.fillRoundedRect(1564, 854, 123, 52, 7);
-    sortBg.lineStyle(1, 0x976331, 0.9);
-    sortBg.strokeRoundedRect(1564, 854, 123, 52, 7);
-    const sortText = addText(scene, 1625.5, 880, "整理", 20, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-    this.techniqueHintText = addText(scene, 1375, 930, "先选择左侧功法位，再选择右侧功法即可装备。", 16, "#b99a72", { strokeThickness: 0 }).setOrigin(0.5);
-    layer.add([this.techniqueEmptyText, this.techniqueCapacityText, sortBg, sortText, this.techniqueHintText]);
-  }
-
-  /** 老存档进入功法页时补齐装备栏数据。 */
-  ensureTechniqueEquipment() {
-    const current = gameState.player.equippedTechniques || {};
-    gameState.player.equippedTechniques = {
-      main: current.main || null,
-      auxiliary: Array.from({ length: 4 }, (_, index) => current.auxiliary?.[index] || null),
-      speed: current.speed || null,
-    };
-    return gameState.player.equippedTechniques;
-  }
-
-  getTechniqueItems() {
-    const inventory = gameState.player.inventory || {};
-    return this.scene.getMerchantItems()
-      .map((item) => ({ ...item, quantity: Math.max(0, Number(inventory[item.id]) || 0) }))
-      .filter((item) => item.quantity > 0 && item.type === "功法")
-      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
-  }
-
-  getTechniqueForSlot(slotId) {
-    const equipped = this.ensureTechniqueEquipment();
-    if (slotId === "main" || slotId === "speed") return equipped[slotId];
-    const index = Number(slotId.split("-")[1]);
-    return equipped.auxiliary[index] || null;
-  }
-
-  /** 将功法装入指定位置；同一功法不可重复装备，改装后立即写入当前角色档案。 */
-  equipTechnique(slotId, techniqueId) {
-    const equipped = this.ensureTechniqueEquipment();
-    // 先移除该功法旧的装备位置，避免主修、辅修、速度栏同时指向同一本功法。
-    if (equipped.main === techniqueId) equipped.main = null;
-    if (equipped.speed === techniqueId) equipped.speed = null;
-    equipped.auxiliary = equipped.auxiliary.map((id) => id === techniqueId ? null : id);
-    if (slotId === "main" || slotId === "speed") equipped[slotId] = techniqueId;
-    else equipped.auxiliary[Number(slotId.split("-")[1])] = techniqueId;
-    saveFirstChapterProgress();
-    this.renderTechniquePage();
-  }
-
-  /** 功法页自己的提示文字位于可见层中，不能复用被隐藏的储物袋提示条。 */
-  showTechniqueEquipNotice(item) {
-    if (!this.techniqueHintText) return;
-    const slot = this.techniqueSlotButtons.find((entry) => entry.id === this.selectedTechniqueSlot);
-    const suffix = slot?.label === "速度" ? "；速度位会参与战斗先手判定" : "";
-    this.techniqueHintText.setText(`已装备「${item.name}」至${slot?.label || "功法"}位${suffix}`).setColor("#e8cb85");
-  }
-
-  /** 将当前选中的功法位清空。右键点击左侧装备位即可使用。 */
-  clearTechniqueSlot(slotId) {
-    const equipped = this.ensureTechniqueEquipment();
-    if (slotId === "main" || slotId === "speed") equipped[slotId] = null;
-    else equipped.auxiliary[Number(slotId.split("-")[1])] = null;
-    saveFirstChapterProgress();
-    this.renderTechniquePage();
-    if (this.techniqueHintText) this.techniqueHintText.setText("已卸下功法。选择左侧功法位后，可重新装备。").setColor("#b99a72");
-  }
-
-  renderTechniquePage() {
-    if (!this.techniqueLayer) return;
-    const items = this.getTechniqueItems();
-    const itemsById = new Map(items.map((item) => [item.id, item]));
-    this.techniqueSlotButtons.forEach((slot) => {
-      const technique = itemsById.get(this.getTechniqueForSlot(slot.id));
-      const selected = slot.id === this.selectedTechniqueSlot;
-      slot.holder.clear();
-      slot.holder.fillStyle(selected ? 0x9d7a40 : 0x725a38, selected ? 1 : 0.92);
-      slot.holder.fillRoundedRect(slot.x - 53, slot.y - 52, 106, 104, 9);
-      slot.holder.fillStyle(0x5a452b, 0.95);
-      slot.holder.fillCircle(slot.x, slot.y, 42);
-      slot.holder.lineStyle(selected ? 2 : 1, selected ? 0xffe19a : 0xe4cc8a, selected ? 1 : 0.72);
-      slot.holder.strokeRoundedRect(slot.x - 53, slot.y - 52, 106, 104, 9);
-      slot.iconLayer.removeAll(true);
-      if (technique) {
-        slot.iconLayer.add(this.scene.add.image(0, -2, technique.texture).setDisplaySize(84, 84));
-        slot.iconLayer.add(addText(this.scene, 0, 39, technique.name, 13, "#f6ddb1", { strokeThickness: 0 }).setOrigin(0.5));
-      }
-      slot.text.setColor(slot.label === "主修" ? "#6b3b08" : "#5e440d");
-    });
-
-    this.techniqueGridLayer.removeAll(true);
-    this.techniqueLibrarySlots = [];
-    for (let index = 0; index < 10; index += 1) {
-      const column = index % 5;
-      const row = Math.floor(index / 5);
-      const x = 1060 + column * 129;
-      const y = 334 + row * 130;
-      const item = items[index];
-      const cell = this.scene.add.graphics();
-      cell.fillStyle(0x36261c, 0.94);
-      cell.fillRoundedRect(x, y, 105, 104, 5);
-      cell.lineStyle(1, 0x715033, 0.86);
-      cell.strokeRoundedRect(x, y, 105, 104, 5);
-      this.techniqueGridLayer.add(cell);
-      if (!item) continue;
-      const icon = this.scene.add.image(x + 52.5, y + 47, item.texture).setDisplaySize(78, 78);
-      const name = addText(this.scene, x + 52.5, y + 88, item.name, 14, "#f2d1ab", { strokeThickness: 0 }).setOrigin(0.5);
-      this.techniqueGridLayer.add([icon, name]);
-      this.techniqueLibrarySlots.push({ item, x, y, width: 105, height: 104 });
-    }
-    this.techniqueEmptyText.setVisible(!items.length);
-    this.techniqueCapacityText.setText(`${items.length} / 100`);
   }
 
   createItemActionMenu() {
@@ -602,19 +270,7 @@ export class StorageBagPanel {
   }
 
   describeItemEffect(item) {
-    const effect = this.getUseEffect(item);
-    if (!effect) return "该物品暂时不能直接使用";
-    const entries = [];
-    if (effect.hp) entries.push(`生命 +${effect.hp}`);
-    if (effect.qi) entries.push(`修为 +${effect.qi}`);
-    if (effect.attack) entries.push(`攻击 +${effect.attack}`);
-    if (effect.defense) entries.push(`防御 +${effect.defense}`);
-    if (effect.resistanceType && effect.resistanceType !== "无") entries.push(`抗性：${effect.resistanceType}`);
-    else if (effect.resistance) entries.push(`抗性 +${effect.resistance}`);
-    if (effect.cultivationExp) entries.push(`修炼经验 +${effect.cultivationExp}`);
-    if (effect.skillText) entries.push("习得技能");
-    if (effect.duration) entries.push(`持续 ${effect.duration} 秒`);
-    return entries.length ? entries.join("，") : "暂无可用效果";
+    return this.inventoryService.describeEffect(item);
   }
 
   showUseResult(item, message, failed = false) {
@@ -641,26 +297,18 @@ export class StorageBagPanel {
   }
 
   discardItem(item) {
-    const inventory = gameState.player.inventory || {};
-    const quantity = Math.max(0, Number(inventory[item?.id]) || 0);
-    if (!item || quantity <= 0) return;
-    inventory[item.id] = quantity - 1;
-    if (inventory[item.id] <= 0) delete inventory[item.id];
+    const result = this.inventoryService.discard(item);
+    if (!result.ok) return;
     this.selectedItemId = null;
     this.hoveredItemId = null;
     this.clearInfo();
     this.closeItemActionMenu();
-    this.showUseNotice(`已丢弃 ${item.name} × 1`, "#e3b99e");
-    saveFirstChapterProgress();
+    this.showUseNotice(result.message, "#e3b99e");
     this.render();
   }
 
-  /**
-   * 打开背包总面板。
-   * @param {"储物袋"|"法宝"|"功法"} initialTab 由顶部 HUD 决定默认打开的页签。
-   */
-  open(initialTab = "储物袋") {
-    if (!this.panel) this.create();
+  reset() {
+    if (!this.storageLayer) this.create();
     this.clearExpiredEffects();
     this.category = "全部";
     this.grade = "全部";
@@ -672,17 +320,17 @@ export class StorageBagPanel {
     this.infoLayer.setVisible(false);
     this.closeItemActionMenu();
     this.useResultLayer?.setVisible(false);
-    this.panel.setAlpha(0).setVisible(true);
-    // 每次打开都显式切换页签，避免上一次停留在法宝页时状态残留。
-    this.setActiveTab(initialTab);
-    this.scene.tweens.add({ targets: this.panel, alpha: 1, duration: 180, ease: "Sine.Out" });
-    playUiClickSound(this.scene);
+    this.render();
   }
 
-  close() {
-    if (!this.visible) return;
-    playUiClickSound(this.scene);
-    this.panel.setVisible(false);
+  setVisible(visible) {
+    if (!this.storageLayer) this.create();
+    this.storageLayer.setVisible(visible);
+    if (visible) this.render();
+    else this.deactivate();
+  }
+
+  deactivate() {
     this.infoLayer.setVisible(false);
     this.gradeMenu.setVisible(false);
     this.closeItemActionMenu();
@@ -835,129 +483,18 @@ export class StorageBagPanel {
   }
 
   getUseEffect(item) {
-    if (item?.canUse === false) return null;
-
-    // 物品管理编辑器填写的效果优先于旧的演示数据。
-    const configuredEffect = {
-      hp: Math.max(0, Number(item?.restoreHp) || 0),
-      qi: Math.max(0, Number(item?.restoreQi) || 0),
-      attack: Math.max(0, Number(item?.attackBonus) || 0),
-      defense: Math.max(0, Number(item?.defenseBonus) || 0),
-      resistance: Math.max(0, Number(item?.resistance) || 0),
-      resistanceType: String(item?.resistanceType || "无"),
-      cultivationExp: Math.max(0, Number(item?.cultivationExp) || 0),
-      duration: Math.max(0, Number(item?.duration) || 0),
-      successRate: Phaser.Math.Clamp(Number(item?.successRate ?? 100) || 0, 0, 100),
-      skillText: String(item?.skillText || "").trim(),
-    };
-    const hasConfiguredEffect = Boolean(
-      configuredEffect.hp || configuredEffect.qi || configuredEffect.attack
-      || configuredEffect.defense || configuredEffect.resistance || configuredEffect.resistanceType !== "无" || configuredEffect.cultivationExp
-      || configuredEffect.duration || configuredEffect.skillText
-    );
-    if (hasConfiguredEffect) return configuredEffect;
-
-    return ({
-      baixiangye: { hp: 4 },
-      juqicao: { qi: 8 },
-      xingyingguo: { qi: 18 },
-      ninglutai: { hp: 8, qi: 4 },
-      linggugen: { hp: 20 },
-      yuyazhi: { hp: 16, qi: 16 },
-      qingmaiteng: { hp: 8 },
-      qinglinghua: { qi: 12 },
-      chiyangshen: { hp: 10, qi: 20 },
-    })[item.id] || null;
+    return this.inventoryService.getUseEffect(item);
   }
 
   useItem(item) {
-    const effect = this.getUseEffect(item);
-    if (!effect) {
-      this.showUseNotice(`${item.name} 暂时不能直接使用`, "#e3b99e");
-      this.showUseResult(item, "该物品暂时不能直接使用", true);
-      return;
-    }
-    const player = gameState.player;
-    // 有成功率的物品先结算成败。失败同样会消耗该物品，符合丹药、符箓类消耗品的常见规则。
-    const succeeded = Math.random() * 100 < (effect.successRate ?? 100);
-    const inventory = player.inventory || (player.inventory = {});
-    const consumeOne = () => {
-      inventory[item.id] = Math.max(0, (Number(inventory[item.id]) || 0) - 1);
-      if (inventory[item.id] <= 0) delete inventory[item.id];
-    };
-    if (!succeeded) {
-      consumeOne();
-      this.selectedItemId = null;
-      this.hoveredItemId = null;
-      this.showUseNotice(`使用 ${item.name} 失败，物品已消耗`, "#e3b99e");
-      this.showUseResult(item, "使用失败，物品已消耗", true);
-      saveFirstChapterProgress();
-      this.render();
-      return;
-    }
-    const oldHp = Number(player.hp) || 0;
-    const oldQi = Number(player.qi) || 0;
-    const nextHp = Phaser.Math.Clamp(oldHp + (effect.hp || 0), 0, Number(player.maxHp) || oldHp);
-    const nextQi = Phaser.Math.Clamp(oldQi + (effect.qi || 0), 0, Number(player.maxQi) || oldQi);
-    const gainedHp = nextHp - oldHp;
-    const gainedQi = nextQi - oldQi;
-    const hasOtherEffect = Boolean(effect.attack || effect.defense || effect.resistance || effect.resistanceType !== "无" || effect.cultivationExp || effect.skillText);
-    if (gainedHp <= 0 && gainedQi <= 0 && !hasOtherEffect) {
-      this.showUseNotice("生命与修为均已圆满，无需使用", "#e3b99e");
-      this.showUseResult(item, "生命与修为均已圆满，无需使用", true);
-      return;
-    }
-    consumeOne();
-    player.hp = nextHp;
-    player.qi = nextQi;
-    player.cultivationExp = Math.max(0, Number(player.cultivationExp) || 0) + (effect.cultivationExp || 0);
-    if (effect.resistanceType && effect.resistanceType !== "无") {
-      const currentTypes = Array.isArray(player.resistanceTypes) ? player.resistanceTypes : [];
-      player.resistanceTypes = Array.from(new Set([...currentTypes, effect.resistanceType]));
-    }
-
-    const bonus = { attack: effect.attack || 0, defense: effect.defense || 0, resistance: effect.resistance || 0 };
-    const hasBonus = bonus.attack > 0 || bonus.defense > 0 || bonus.resistance > 0;
-    if (hasBonus) {
-      player.attack = Math.max(0, Number(player.attack) || 0) + bonus.attack;
-      player.defense = Math.max(0, Number(player.defense) || 0) + bonus.defense;
-      player.resistance = Math.max(0, Number(player.resistance) || 0) + bonus.resistance;
-      if (effect.duration > 0) this.addTemporaryEffect(item, bonus, effect.duration);
-    }
-    if (effect.skillText) {
-      player.learnedSkills = Array.isArray(player.learnedSkills) ? player.learnedSkills : [];
-      if (!player.learnedSkills.includes(effect.skillText)) player.learnedSkills.push(effect.skillText);
-    }
-    this.selectedItemId = inventory[item.id] ? item.id : null;
+    const result = this.inventoryService.use(item);
+    this.selectedItemId = this.inventoryService.getQuantity(item.id) > 0 ? item.id : null;
     this.hoveredItemId = null;
-    const recovered = [];
-    if (gainedHp > 0) recovered.push(`生命 +${gainedHp}`);
-    if (gainedQi > 0) recovered.push(`修为 +${gainedQi}`);
-    if (bonus.attack > 0) recovered.push(`攻击 +${bonus.attack}`);
-    if (bonus.defense > 0) recovered.push(`防御 +${bonus.defense}`);
-    if (effect.resistanceType && effect.resistanceType !== "无") recovered.push(`抗性：${effect.resistanceType}`);
-    else if (bonus.resistance > 0) recovered.push(`抗性 +${bonus.resistance}`);
-    if (effect.cultivationExp > 0) recovered.push(`修炼经验 +${effect.cultivationExp}`);
-    if (effect.skillText) recovered.push("已习得技能");
-    if (effect.duration > 0 && hasBonus) recovered.push(`持续 ${effect.duration} 秒`);
-    this.showUseNotice(`使用 ${item.name}：${recovered.join("，")}`);
-    this.showUseResult(item, recovered.join("，") || this.describeItemEffect(item));
-    saveFirstChapterProgress();
+    this.showUseNotice(result.ok ? `使用 ${item.name}：${result.message}` : result.message, result.ok ? "#b8deb4" : "#e3b99e");
+    this.showUseResult(item, result.message, !result.ok);
+    if (result.temporaryEffect) this.scheduleEffectExpiry(result.temporaryEffect);
     this.scene.chapterMapHud?.refreshPlayerStatus?.();
     this.render();
-  }
-
-  addTemporaryEffect(item, bonus, duration) {
-    const player = gameState.player;
-    player.activeItemEffects = Array.isArray(player.activeItemEffects) ? player.activeItemEffects : [];
-    const effect = {
-      id: `${item.id}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      itemName: item.name,
-      ...bonus,
-      expiresAt: Date.now() + duration * 1000,
-    };
-    player.activeItemEffects.push(effect);
-    this.scheduleEffectExpiry(effect);
   }
 
   scheduleEffectExpiry(effect) {
@@ -972,23 +509,12 @@ export class StorageBagPanel {
   }
 
   clearExpiredEffects() {
-    const player = gameState.player;
-    const effects = Array.isArray(player.activeItemEffects) ? player.activeItemEffects : [];
-    const now = Date.now();
-    const expired = effects.filter((effect) => Number(effect.expiresAt) <= now);
-    if (expired.length) {
-      expired.forEach((effect) => {
-        const timer = this.effectTimers.get(effect.id);
-        timer?.remove?.(false);
-        this.effectTimers.delete(effect.id);
-        player.attack = Math.max(0, (Number(player.attack) || 0) - (Number(effect.attack) || 0));
-        player.defense = Math.max(0, (Number(player.defense) || 0) - (Number(effect.defense) || 0));
-        player.resistance = Math.max(0, (Number(player.resistance) || 0) - (Number(effect.resistance) || 0));
-      });
-      player.activeItemEffects = effects.filter((effect) => Number(effect.expiresAt) > now);
-      saveFirstChapterProgress();
-    }
-    (player.activeItemEffects || []).forEach((effect) => this.scheduleEffectExpiry(effect));
+    const { expired, active } = this.inventoryService.clearExpiredEffects();
+    expired.forEach((effect) => {
+      this.effectTimers.get(effect.id)?.remove?.(false);
+      this.effectTimers.delete(effect.id);
+    });
+    active.forEach((effect) => this.scheduleEffectExpiry(effect));
   }
 
   clearInfo() {
@@ -1024,8 +550,7 @@ export class StorageBagPanel {
   }
 
   handlePointerMove(pointer) {
-    // 法宝页没有普通背包的悬浮详情卡，不应继续命中被隐藏的物品格。
-    if (this.activeTab !== "储物袋") return;
+    if (!this.visible) return;
     const slot = this.findSlot(pointer);
     if (slot) this.showInfo(slot.item);
     else this.clearInfo();
@@ -1054,72 +579,6 @@ export class StorageBagPanel {
       }
       return;
     }
-    if (inArea(({ x, y }) => x >= 1769 && x <= 1833 && y >= 40 && y <= 104)) { this.close(); return; }
-
-    // 顶部导航中已完成“储物袋”“法宝”“功法”三个页签；其它标签保留展示，不抢占点击。
-    const navigation = this.navEntries?.find(([name, centerX]) => (
-      (name === "储物袋" || name === "法宝" || name === "功法")
-      && inArea(({ x, y }) => x >= centerX - 100 && x <= centerX + 100 && y >= 34 && y <= 110)
-    ));
-    if (navigation) {
-      playUiClickSound(this.scene);
-      this.setActiveTab(navigation[0]);
-      return;
-    }
-
-    // 法宝页仅处理六个定位与整理按钮，不能落入储物袋的物品分类逻辑。
-    if (this.activeTab === "法宝") {
-      const category = this.artifactCategoryButtons.find((button) => inArea(({ x, y }) => (
-        x >= button.x - 53 && x <= button.x + 53 && y >= button.y - 52 && y <= button.y + 87
-      )));
-      if (category) {
-        playUiClickSound(this.scene);
-        this.artifactCategory = category.name;
-        this.renderArtifact();
-        return;
-      }
-      if (inArea(({ x, y }) => x >= 1564 && x <= 1687 && y >= 854 && y <= 906)) {
-        playUiClickSound(this.scene);
-        this.showUseNotice("法宝已按品阶整理", "#e6c98c");
-      }
-      return;
-    }
-
-    // 功法页：左侧选择装备位，右侧选择背包中拥有的功法。
-    // 右键左侧位可卸下功法，方便重新安排主修、辅修和速度位。
-    if (this.activeTab === "功法") {
-      const techniqueSlot = this.techniqueSlotButtons.find((button) => inArea(({ x, y }) => (
-        x >= button.x - 53 && x <= button.x + 53 && y >= button.y - 52 && y <= button.y + 87
-      )));
-      if (techniqueSlot) {
-        playUiClickSound(this.scene);
-        const isRightClick = pointer?.button === 2
-          || pointer?.event?.button === 2
-          || pointer?.event?.which === 3
-          || (typeof pointer?.rightButtonDown === "function" && pointer.rightButtonDown());
-        if (isRightClick) this.clearTechniqueSlot(techniqueSlot.id);
-        else {
-          this.selectedTechniqueSlot = techniqueSlot.id;
-          this.renderTechniquePage();
-        }
-        return;
-      }
-      const technique = this.techniqueLibrarySlots.find((slot) => inArea(({ x, y }) => (
-        x >= slot.x && x <= slot.x + slot.width && y >= slot.y && y <= slot.y + slot.height
-      )));
-      if (technique) {
-        playUiClickSound(this.scene);
-        this.equipTechnique(this.selectedTechniqueSlot, technique.item.id);
-        this.showTechniqueEquipNotice(technique.item);
-        return;
-      }
-      if (inArea(({ x, y }) => x >= 1564 && x <= 1687 && y >= 854 && y <= 906)) {
-        playUiClickSound(this.scene);
-        this.techniqueHintText?.setText("功法库已按名称整理。").setColor("#e6c98c");
-      }
-      return;
-    }
-
     if (this.actionMenu?.visible) this.closeItemActionMenu();
     const category = this.categoryButtons.find((button) => inArea(({ x, y }) => x >= button.x && x <= button.x + 79 && y >= 318 && y <= 363));
     if (category) {
@@ -1176,7 +635,7 @@ export class StorageBagPanel {
   }
 
   isGridPointer(pointer) {
-    if (this.activeTab !== "储物袋") return false;
+    if (!this.visible) return false;
     return this.pointerCandidates(pointer).some(({ x, y }) => x >= 1015 && x <= 1740 && y >= 400 && y <= 950);
   }
 

@@ -1,0 +1,13 @@
+{
+  "name": "xuanqiong-wendao",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "test:artifact": "node scripts/smoke-artifact-service.mjs",
+    "test:combat": "node scripts/smoke-combat-engine.mjs",
+    "test:reward": "node scripts/smoke-battle-reward-service.mjs",
+    "test:save": "node scripts/smoke-save-migrations.mjs",
+    "test": "npm run check:architecture && npm run test:artifact && npm run test:combat && npm run test:reward && npm run test:save"
+  }
+}

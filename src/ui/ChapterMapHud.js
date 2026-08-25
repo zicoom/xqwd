@@ -128,10 +128,9 @@ export class ChapterMapHud {
     // 每个图标都是独立 PNG，不使用整张截图，因此保留点击功能并方便以后替换。
     const entries = [
       ["pixso-ui-store", "储物袋", () => scene.openStorageBag()],
-      ["pixso-ui-spell", "法术", () => scene.openSimpleFeaturePanel("法术", `当前主灵根：${gameState.player.selectedElement}。初始术法已在战斗中可用。`)],
-      // 功法页与储物袋、法宝共用同一张全屏面板，但默认定位到主修/辅修/速度栏。
+      ["pixso-ui-spell", "法术", () => scene.openSpellPanel()],
+      // 功法、法术、法宝都是角色菜单的独立子页，顶部入口只指定默认页签。
       ["pixso-ui-gongfa", "功法", () => scene.openTechniqueBag()],
-      // 法宝入口与储物袋共用同一张全屏面板，只是默认打开“法宝”标签页。
       ["pixso-ui-artifact", "法宝", () => scene.openArtifactBag()],
       ["pixso-ui-save", "存档", () => scene.saveGameFromMenu()],
       ["pixso-ui-settings", "设置", () => scene.openGameSettings()],

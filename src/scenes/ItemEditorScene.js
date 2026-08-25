@@ -1,4 +1,5 @@
 import {
+  ARTIFACT_CATEGORIES,
   BOOK_KINDS,
   ELEMENT_TYPES,
   EQUIPMENT_SLOTS,
@@ -325,6 +326,15 @@ export class ItemEditorScene extends Phaser.Scene {
           number("等级上限", "techniqueLevelLimit", 99),
         ],
       },
+      法宝: {
+        useLabel: "可装备",
+        noteLabel: "法宝能力说明",
+        placeholder: "例如：御剑飞行时提升先手，或为角色提供护体抗性。",
+        left: [
+          select("法宝类别", "artifactCategory", ARTIFACT_CATEGORIES),
+        ],
+        right: [],
+      },
       书籍: {
         useLabel: "可阅读",
         noteLabel: "书籍 / 配方说明",
@@ -445,6 +455,9 @@ export class ItemEditorScene extends Phaser.Scene {
         addText("元素：", item.techniqueElement);
         add("伤害 +", item.techniqueDamage);
         add("灵力消耗 ", item.techniqueQiCost);
+        break;
+      case "法宝":
+        addText("类别：", item.artifactCategory);
         break;
       case "书籍":
         addText("类别：", item.bookKind);
