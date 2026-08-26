@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Alimama DongFangDaKai";
+  src: url("../public/assets/fonts/AlimamaDongFangDaKai-Regular_1.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 /* 页面只负责承载游戏；水墨效果主要由 Phaser 场景绘制，避免依赖外部图片。 */
 :root {
   color-scheme: dark;

@@ -2,6 +2,8 @@
  * NPC 与建筑模板仓库。
  * 和怪物模板一样：编辑器负责定义模板，地图只保存模板编号与坐标。
  */
+import { getLegacyEditorData, loadEditorData, saveEditorData } from "./EditorFileRepository.js";
+
 const NPC_KEY = "xuanqiong-wendao-npc-templates-v1";
 const BUILDING_KEY = "xuanqiong-wendao-building-templates-v1";
 
@@ -22,27 +24,27 @@ const DEFAULT_BUILDINGS = [{
   interactionText: "这是一间普通民居，屋内传来饭菜香。",
 }];
 
-function readTemplates(key, defaults, normalize) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(key) || "null");
-    if (Array.isArray(raw)) return raw.map(normalize);
-    const initial = defaults.map(normalize);
-    localStorage.setItem(key, JSON.stringify(initial));
-    return initial;
-  } catch (error) {
-    console.warn("世界模板读取失败：", error);
-    return defaults.map(normalize);
+function readTemplates(type, legacyKey, defaults, normalize) {
+  const stored = loadEditorData(type);
+  if (stored.ok && Array.isArray(stored.data)) return stored.data.map(normalize);
+  // 旧服务器未重启时 API 会不可用；此时仍要保留浏览器中的旧模板作为只读回退。
+  const legacy = stored.ok ? null : getLegacyEditorData(legacyKey);
+  const initial = Array.isArray(legacy) ? legacy.map(normalize) : defaults.map(normalize);
+  if (stored.missing) {
+    const migrated = saveEditorData(type, initial);
+    if (migrated.ok && Array.isArray(migrated.data)) return migrated.data.map(normalize);
   }
+  if (!stored.unavailable && !stored.missing) console.warn("世界模板读取失败：", stored.error);
+  return initial;
 }
 
-function writeTemplates(key, templates, normalize) {
-  try {
-    localStorage.setItem(key, JSON.stringify(templates.map(normalize)));
-    return true;
-  } catch (error) {
-    console.warn("世界模板保存失败：", error);
-    return false;
+function writeTemplates(type, templates, normalize) {
+  const saved = saveEditorData(type, templates.map(normalize));
+  if (saved.ok && Array.isArray(saved.data) && Array.isArray(templates)) {
+    templates.splice(0, templates.length, ...saved.data.map(normalize));
   }
+  if (!saved.ok) console.warn("世界模板保存失败：", saved.error);
+  return saved.ok;
 }
 
 export function normalizeNpc(npc = {}) {
@@ -128,15 +130,15 @@ export function normalizeNpc(npc = {}) {
   };
 }
 export function getNpcTemplates() {
-  const templates = readTemplates(NPC_KEY, DEFAULT_NPCS, normalizeNpc);
+  const templates = readTemplates("npcs", NPC_KEY, DEFAULT_NPCS, normalizeNpc);
   // 已创建过 NPC 的旧存档不会自动合并默认模板；这里补入一次云游商人，地图编辑器马上可选择放置。
   if (!templates.some((item) => item.id === "npc-qixia-merchant")) {
     templates.push(normalizeNpc(DEFAULT_NPCS.find((item) => item.id === "npc-qixia-merchant")));
-    writeTemplates(NPC_KEY, templates, normalizeNpc);
+    writeTemplates("npcs", templates, normalizeNpc);
   }
   return templates;
 }
-export function saveNpcTemplates(items) { return writeTemplates(NPC_KEY, items, normalizeNpc); }
+export function saveNpcTemplates(items) { return writeTemplates("npcs", items, normalizeNpc); }
 export function getNpcTemplate(id) { return getNpcTemplates().find((item) => item.id === id) || null; }
 
 export function normalizeBuilding(building = {}) {
@@ -182,6 +184,6 @@ export function normalizeBuilding(building = {}) {
     interactionText: String(interaction.prompt || building.interactionText || "这是一座建筑。").trim(),
   };
 }
-export function getBuildingTemplates() { return readTemplates(BUILDING_KEY, DEFAULT_BUILDINGS, normalizeBuilding); }
-export function saveBuildingTemplates(items) { return writeTemplates(BUILDING_KEY, items, normalizeBuilding); }
+export function getBuildingTemplates() { return readTemplates("buildings", BUILDING_KEY, DEFAULT_BUILDINGS, normalizeBuilding); }
+export function saveBuildingTemplates(items) { return writeTemplates("buildings", items, normalizeBuilding); }
 export function getBuildingTemplate(id) { return getBuildingTemplates().find((item) => item.id === id) || null; }

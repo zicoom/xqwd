@@ -1,21 +1,27 @@
 /**
  * 本地数据备份模块。
  *
- * 当前游戏是离线网页游戏，角色档案、编辑器模板、地图摆放内容都放在浏览器的
- * localStorage 中；它们不会跟随 webGame 文件夹一起复制。
- * 本文件把所有以 xuanqiong-wendao- 开头的游戏资料打包为一个 JSON 下载文件，
- * 并支持在另一台电脑选择备份文件后完整恢复。
+ * 角色档案与游戏设置仍保存在浏览器 localStorage；开发者控制台模板和图片已写入项目
+ * 文件夹，会随整个 webGame 目录一起复制。本文件只备份玩家资料；导入旧版
+ * “包含编辑器资料”的浏览器备份时会忽略其中的编辑器副本，避免再写回浏览器。
  */
 
 // 只备份本游戏的资料，绝不把浏览器中其他网站的数据一并导出。
 const GAME_STORAGE_PREFIX = "xuanqiong-wendao-";
+const EDITOR_STORAGE_TYPES = Object.freeze({
+  "xuanqiong-wendao-item-templates-v1": "items",
+  "xuanqiong-wendao-monster-templates-v1": "monsters",
+  "xuanqiong-wendao-npc-templates-v1": "npcs",
+  "xuanqiong-wendao-building-templates-v1": "buildings",
+  "xuanqiong-wendao-map-content-v1": "map-content",
+});
 
 /** 收集当前浏览器中属于本游戏的全部键值，供导出与导入失败回滚共用。 */
 function collectGameStorage() {
   const storage = {};
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index);
-    if (!key?.startsWith(GAME_STORAGE_PREFIX)) continue;
+    if (!key?.startsWith(GAME_STORAGE_PREFIX) || EDITOR_STORAGE_TYPES[key]) continue;
     storage[key] = localStorage.getItem(key);
   }
   return storage;
@@ -47,7 +53,7 @@ export function exportLocalGameData() {
       format: "xuanqiong-wendao-local-backup",
       version: 1,
       exportedAt: new Date().toISOString(),
-      description: "角色档案、地图编辑器、NPC、怪物、建筑与物品模板的浏览器本地备份。",
+      description: "角色档案、游戏设置等浏览器本地备份；控制台模板和图片已保存在项目文件夹。",
       storage,
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
@@ -148,8 +154,9 @@ export async function importLocalGameDataFromFile() {
       && Object.entries(importedStorage).every(([key, value]) => key.startsWith(GAME_STORAGE_PREFIX) && typeof value === "string");
     if (!valid) return { success: false, message: "这不是《玄穹问道》的有效数据备份。" };
 
-    const count = Object.keys(importedStorage).length;
-    if (!window.confirm(`导入会覆盖本机现有的游戏数据。\n将恢复 ${count} 项资料（角色、物品、NPC、怪物、地图等）。\n\n确定导入吗？`)) {
+    const browserEntries = Object.entries(importedStorage).filter(([key]) => !EDITOR_STORAGE_TYPES[key]);
+    const count = browserEntries.length;
+    if (!window.confirm(`导入会覆盖本机现有的玩家资料。\n将恢复 ${count} 项浏览器资料；旧备份中的控制台模板不会写回浏览器。\n\n确定导入吗？`)) {
       return { success: false, cancelled: true };
     }
 
@@ -157,9 +164,8 @@ export async function importLocalGameDataFromFile() {
     const previousStorage = collectGameStorage();
     try {
       clearGameStorage();
-      Object.entries(importedStorage).forEach(([key, value]) => localStorage.setItem(key, value));
-      const importedCorrectly = Object.entries(importedStorage)
-        .every(([key, value]) => localStorage.getItem(key) === value);
+      browserEntries.forEach(([key, value]) => localStorage.setItem(key, value));
+      const importedCorrectly = browserEntries.every(([key, value]) => localStorage.getItem(key) === value);
       if (!importedCorrectly) throw new Error("浏览器未能完整写入备份资料");
     } catch (error) {
       clearGameStorage();

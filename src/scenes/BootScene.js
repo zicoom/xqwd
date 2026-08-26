@@ -1,6 +1,7 @@
 import { SceneKeys } from "../core/SceneKeys.js";
-import { loadLastPlayedProgress } from "../core/GameState.js";
+import { gameState, loadLastPlayedProgress } from "../core/GameState.js";
 import { getEditorRoute } from "../core/EditorRoute.js";
+import { clearSceneResumeRoute, getSectResumeRoute } from "../core/SceneResumeState.js";
 
 /**
  * 启动场景。
@@ -17,7 +18,18 @@ export class BootScene extends Phaser.Scene {
       this.scene.start(editorRoute);
       return;
     }
-    // 有最近存档时，刷新网页会直接回到青云山；第一次打开或没有角色时才显示封面。
-    this.scene.start(loadLastPlayedProgress() ? SceneKeys.VILLAGE : SceneKeys.COVER);
+    // 有最近存档时先恢复本标签页所在的门派页面；没有页面记录才回到青云山。
+    // 门派恢复状态与档位绑定，避免切换角色后误进入另一个角色之前停留的页面。
+    if (!loadLastPlayedProgress()) {
+      clearSceneResumeRoute();
+      this.scene.start(SceneKeys.COVER);
+      return;
+    }
+    const sectRoute = getSectResumeRoute(gameState.activeSaveSlot);
+    if (sectRoute) {
+      this.scene.start(SceneKeys.SECT, sectRoute);
+      return;
+    }
+    this.scene.start(SceneKeys.VILLAGE);
   }
 }

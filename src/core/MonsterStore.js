@@ -3,6 +3,8 @@
  * 地图不再保存每一只怪物的完整数值，只保存 monsterTemplateId（模板编号）。
  * 这样修改“青木狼”模板后，地图上所有青木狼都会同步使用新数值。
  */
+import { getLegacyEditorData, loadEditorData, saveEditorData } from "./EditorFileRepository.js";
+
 const MONSTER_STORE_KEY = "xuanqiong-wendao-monster-templates-v1";
 
 /** 初始示例数据：可直接用于测试，也可以在怪物编辑器中修改或删除。 */
@@ -76,27 +78,27 @@ export function normalizeMonster(monster = {}) {
 
 /** 获取所有模板；第一次使用时自动创建示例怪物。 */
 export function getMonsterTemplates() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(MONSTER_STORE_KEY) || "null");
-    if (Array.isArray(stored)) return stored.map(normalizeMonster);
-    const initial = DEFAULT_MONSTERS.map(normalizeMonster);
-    localStorage.setItem(MONSTER_STORE_KEY, JSON.stringify(initial));
-    return initial;
-  } catch (error) {
-    console.warn("怪物模板读取失败：", error);
-    return DEFAULT_MONSTERS.map(normalizeMonster);
+  const stored = loadEditorData("monsters");
+  if (stored.ok && Array.isArray(stored.data)) return stored.data.map(normalizeMonster);
+  // 接口暂不可用时仍读取旧浏览器模板，避免页面退回默认怪物而造成“资料丢失”的假象。
+  const legacy = stored.ok ? null : getLegacyEditorData(MONSTER_STORE_KEY);
+  const initial = Array.isArray(legacy) ? legacy.map(normalizeMonster) : DEFAULT_MONSTERS.map(normalizeMonster);
+  if (stored.missing) {
+    const migrated = saveEditorData("monsters", initial);
+    if (migrated.ok && Array.isArray(migrated.data)) return migrated.data.map(normalizeMonster);
   }
+  if (!stored.unavailable && !stored.missing) console.warn("怪物模板读取失败：", stored.error);
+  return initial;
 }
 
 /** 保存整个模板列表。 */
 export function saveMonsterTemplates(templates) {
-  try {
-    localStorage.setItem(MONSTER_STORE_KEY, JSON.stringify(templates.map(normalizeMonster)));
-    return true;
-  } catch (error) {
-    console.warn("怪物模板保存失败：", error);
-    return false;
+  const saved = saveEditorData("monsters", templates.map(normalizeMonster));
+  if (saved.ok && Array.isArray(saved.data) && Array.isArray(templates)) {
+    templates.splice(0, templates.length, ...saved.data.map(normalizeMonster));
   }
+  if (!saved.ok) console.warn("怪物模板保存失败：", saved.error);
+  return saved.ok;
 }
 
 /** 按编号取一只怪物，用于地图和战斗读取。 */

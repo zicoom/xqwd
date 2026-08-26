@@ -98,7 +98,16 @@ export class CharacterMenuPanel {
     close.lineStyle(1, 0xa99763, 1);
     close.strokeRoundedRect(1769, 40, 64, 64, 8);
     const closeLabel = addText(scene, 1801, 72, "×", 34, "#eadfbf", { strokeThickness: 0 }).setOrigin(0.5);
-    panel.add([close, closeLabel]);
+    // 关闭按钮使用自己的透明点击区，不再只依赖场景外层的手工坐标判断。
+    // 点击区与图形同为 64×64，并由 1:1 UI 镜头换算，因此窗口缩放后仍能准确命中。
+    const closeArea = scene.add.zone(1801, 72, 64, 64)
+      .setInteractive({ useHandCursor: true });
+    closeArea.on("pointerdown", (_pointer, _localX, _localY, event) => {
+      // 阻止同一次点击继续传到地图，避免关闭菜单后角色立刻向按钮下方的地图位置移动。
+      event?.stopPropagation?.();
+      this.close();
+    });
+    panel.add([close, closeLabel, closeArea]);
 
     this.panel = panel;
     this.attributePage = new AttributePanel({
@@ -141,6 +150,11 @@ export class CharacterMenuPanel {
       onLoaded: () => scene.scene.restart(),
     });
     this.savePage.create();
+
+    // 探索地图主镜头固定缩放为 0.88；角色菜单则必须从打开的第一帧起就是 1920×1080 全屏。
+    // 这里立即让地图镜头忽略整个菜单，避免等待场景的定时镜头同步期间短暂显示成四周留边的 0.88 版本。
+    // 1:1 的 uiCamera 仍会正常绘制该容器及全部子页面。
+    scene.worldCamera?.ignore(panel);
   }
 
   setActiveTab(tab) {

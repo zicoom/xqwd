@@ -9,9 +9,14 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { EDITOR_TYPES, createEditorFileStorage } = require("./server/editorFileStorage.cjs");
 
 // __dirname 就是本文件所在目录，也就是整个游戏项目的根目录。
 const projectRoot = __dirname;
+const editorStorage = createEditorFileStorage({
+  dataRoot: path.join(projectRoot, "data", "editor"),
+  imageRoot: path.join(projectRoot, "public", "assets", "images", "editor"),
+});
 
 // 浏览器需要知道每种文件是什么类型，图片、声音才能被正确显示和播放。
 const mimeTypes = {
@@ -33,9 +38,67 @@ const mimeTypes = {
   ".woff2": "font/woff2"
 };
 
-const server = http.createServer((request, response) => {
+function sendJson(response, status, body) {
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  response.end(JSON.stringify(body));
+}
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    request.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > 64 * 1024 * 1024) {
+        reject(new Error("单次保存资料过大，请分批上传图片。"));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("error", reject);
+  });
+}
+
+async function handleEditorData(request, response, url) {
+  const type = url.searchParams.get("type");
+  if (!EDITOR_TYPES[type]) {
+    sendJson(response, 400, { ok: false, error: "未知的编辑器资料类型。" });
+    return;
+  }
+  try {
+    if (request.method === "GET") {
+      const data = await editorStorage.read(type);
+      if (data === undefined) {
+        sendJson(response, 404, { ok: false, error: "项目中尚未建立这类编辑资料。" });
+        return;
+      }
+      sendJson(response, 200, { ok: true, data });
+      return;
+    }
+    if (request.method === "PUT") {
+      const rawBody = await readRequestBody(request);
+      const payload = JSON.parse(rawBody || "{}");
+      const data = await editorStorage.write(type, payload.data);
+      sendJson(response, 200, { ok: true, data });
+      return;
+    }
+    sendJson(response, 405, { ok: false, error: "只支持读取或保存编辑器资料。" });
+  } catch (error) {
+    console.error("编辑器资料保存失败：", error.message);
+    sendJson(response, 500, { ok: false, error: error.message || "写入项目文件失败。" });
+  }
+}
+
+const server = http.createServer(async (request, response) => {
   // “/”代表首页，因此自动返回 index.html。
-  const requestPath = new URL(request.url, "http://localhost").pathname;
+  const requestUrl = new URL(request.url, "http://localhost");
+  const requestPath = requestUrl.pathname;
+  if (requestPath === "/api/editor-data") {
+    await handleEditorData(request, response, requestUrl);
+    return;
+  }
   const relativePath = decodeURIComponent(requestPath === "/" ? "/index.html" : requestPath);
   const filePath = path.resolve(projectRoot, `.${relativePath}`);
 
@@ -65,13 +128,14 @@ const server = http.createServer((request, response) => {
 });
 
 // 8000 是游戏当前使用的端口；只允许本机浏览器访问。
-server.listen(8000, "127.0.0.1", () => {
-  console.log("玄穹问道本地服务器已启动： http://localhost:8000");
+const port = Number(process.env.PORT) || 8000;
+server.listen(port, "127.0.0.1", () => {
+  console.log(`玄穹问道本地服务器已启动： http://localhost:${port}`);
 });
 
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
-    console.error("8000 端口已被占用：请直接刷新浏览器，或先关闭旧的服务器窗口。");
+    console.error(`${port} 端口已被占用：请直接刷新浏览器，或先关闭旧的服务器窗口。`);
   } else {
     console.error("服务器启动失败：", error.message);
   }

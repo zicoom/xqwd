@@ -1,4 +1,5 @@
 import { getItemTemplates } from "../../core/ItemStore.js";
+import { getSystemItemTemplates } from "../../core/SystemItemCatalog.js";
 
 /**
  * 游戏运行时统一使用的物品目录。
@@ -13,7 +14,10 @@ export class ItemCatalog {
   }
 
   all() {
-    return this.loadTemplates().map((item) => ({ ...item, texture: this.resolveTexture(item) }));
+    // 系统任务物品放在最后，同 ID 的编辑器数据不能覆盖其“不可使用、不可出售”等规则。
+    const items = [...this.loadTemplates(), ...getSystemItemTemplates()];
+    return Array.from(new Map(items.map((item) => [item.id, item])).values())
+      .map((item) => ({ ...item, texture: this.resolveTexture(item) }));
   }
 
   getById(itemId) {

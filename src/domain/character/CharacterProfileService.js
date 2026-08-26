@@ -1,5 +1,8 @@
 const BASE_ROOTS = Object.freeze(["金", "木", "水", "火", "土"]);
 const SPECIAL_ROOTS = Object.freeze(["风", "雷", "冰", "神", "魔"]);
+// 当前第一章尚未接入完整的境界经验表，因此先使用炼气阶段的基础目标值。
+// 后续境界系统只需在角色数据中提供 cultivationExpTarget，属性页就会自动显示新上限。
+const DEFAULT_CULTIVATION_EXP_TARGET = 1000;
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -9,6 +12,17 @@ function number(value, fallback = 0) {
 function itemName(catalog, itemId) {
   if (!itemId) return "未装备";
   return catalog?.getById?.(itemId)?.name || "未知功法";
+}
+
+/**
+ * 读取角色的修为经验进度。
+ * 修为经验与战斗中的灵气是两套独立数据：前者用于角色成长，后者用于施放法术。
+ */
+export function getCultivationProgress(player = {}) {
+  return {
+    experience: Math.max(0, number(player.cultivationExp)),
+    target: Math.max(1, number(player.cultivationExpTarget, DEFAULT_CULTIVATION_EXP_TARGET)),
+  };
 }
 
 /**
@@ -36,6 +50,7 @@ export class CharacterProfileService {
     const artifacts = this.artifactService?.getLoadout?.() || {};
     const roots = this.player.roots || {};
     const resistanceTypes = Array.isArray(this.player.resistanceTypes) ? this.player.resistanceTypes : [];
+    const cultivationProgress = getCultivationProgress(this.player);
     return {
       identity: {
         name: this.player.name || "无名修士",
@@ -51,9 +66,15 @@ export class CharacterProfileService {
         resistance: number(this.player.resistance), resistanceTypes,
       },
       cultivation: {
-        experience: number(this.player.cultivationExp),
+        ...cultivationProgress,
         roots: BASE_ROOTS.map((element) => ({ element, value: number(roots[element]) })),
-        specialRoots: SPECIAL_ROOTS.map((element) => ({ element, state: "未觉醒" })),
+        // 特殊灵根虽然开局通常为 0，也必须返回稳定数值，属性页才能用与五行灵根
+        // 相同的组件展示。后续奇遇或血脉把数值写入 roots 后，界面会自动显示最新结果。
+        specialRoots: SPECIAL_ROOTS.map((element) => ({
+          element,
+          value: number(roots[element]),
+          state: number(roots[element]) > 0 ? "已觉醒" : "未觉醒",
+        })),
       },
       loadout: {
         mainTechnique: itemName(this.catalog, loadout.main),

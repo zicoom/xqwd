@@ -19,6 +19,15 @@ export class InventoryService {
     return Math.max(0, Number(this.player.inventory?.[itemId]) || 0);
   }
 
+  grant(itemId, quantity = 1) {
+    const amount = Math.max(0, Math.floor(Number(quantity) || 0));
+    if (!itemId || amount <= 0) return { ok: false, message: "奖励物品或数量无效。" };
+    const inventory = this.player.inventory || (this.player.inventory = {});
+    inventory[itemId] = this.getQuantity(itemId) + amount;
+    this.save();
+    return { ok: true, itemId, quantity: amount, total: inventory[itemId] };
+  }
+
   consume(itemId, quantity = 1) {
     const inventory = this.player.inventory || (this.player.inventory = {});
     const available = this.getQuantity(itemId);

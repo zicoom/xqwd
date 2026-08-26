@@ -9,13 +9,16 @@ import { getMonsterTemplate } from "../core/MonsterStore.js";
 import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
 import { getItemTemplates } from "../core/ItemStore.js";
 import { getBuildingTemplate, getNpcTemplate } from "../core/WorldTemplateStore.js";
+import { getBuildingAppearanceTextureKey, resolveBuildingAppearance } from "../core/BuildingAppearance.js";
 import { SceneKeys } from "../core/SceneKeys.js";
-import { addButton, addText, playUiClickSound, startCultivationBackgroundMusic, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
+import { addButton, addText, playUiClickSound, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
 import { ChapterMapHud } from "../ui/ChapterMapHud.js";
+import { preloadPlayerTopToolbarAssets } from "../ui/PlayerTopToolbar.js";
 import { CharacterMenuPanel } from "../ui/character/CharacterMenuPanel.js";
 import { XianxiaDialog } from "../ui/XianxiaDialog.js";
 import { configureFullHdScene, SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
+import { clearSceneResumeRoute } from "../core/SceneResumeState.js";
 import { getPlayerPortrait } from "../core/PortraitCatalog.js";
 import { exportLocalGameData, importLocalGameDataFromFile } from "../core/LocalDataTransfer.js";
 import { ItemCatalog } from "../domain/items/ItemCatalog.js";
@@ -26,6 +29,12 @@ import { InventoryService } from "../domain/inventory/InventoryService.js";
 import { ArtifactLoadoutService } from "../domain/artifacts/ArtifactLoadoutService.js";
 import { CombatShortcutService } from "../domain/combat/CombatShortcutService.js";
 import { SaveArchiveService } from "../domain/save/SaveArchiveService.js";
+import {
+  getBuildingCollisionVertices,
+  getDistanceToBuildingCollision,
+  isMovementBlockedByBuildings,
+} from "../domain/world/BuildingCollisionService.js";
+import { SectAccessService } from "../domain/world/SectAccessService.js";
 import { SaveArchiveRepository } from "../core/save/SaveArchiveRepository.js";
 import {
   ChapterQuestService,
@@ -33,6 +42,8 @@ import {
   QUEST_EVENTS,
 } from "../domain/quests/ChapterQuestService.js";
 import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
+import { ItemRewardPopup } from "../ui/rewards/ItemRewardPopup.js";
+import { SectEntrancePrompt } from "../ui/sect/SectEntrancePrompt.js";
 
 /**
  * 栖霞村探索场景。
@@ -40,6 +51,21 @@ import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
  */
 export class VillageScene extends Phaser.Scene {
   constructor() { super(SceneKeys.VILLAGE); }
+
+  /** 世界物件统一按脚底 Y 坐标排序；数值保持低于固定 HUD、弹窗和任务提示。 */
+  worldActorDepth(y) { return 6 + (Number(y) || 0) / 100000; }
+
+  /** 建筑属于地景层，始终低于角色、NPC 和怪物，避免任何建筑像素盖住人物。 */
+  worldBuildingDepth(y) { return 4 + (Number(y) || 0) / 100000; }
+
+  /** 建筑以碰撞轮廓的最下沿作为“脚底”，避免透明留白让建筑继续压住门前角色。 */
+  worldObjectSortY(object) {
+    if (object?.type === "building") {
+      const vertices = getBuildingCollisionVertices(object);
+      if (vertices.length) return Math.max(...vertices.map((point) => point.y));
+    }
+    return Number(object?.y) || 0;
+  }
 
   /**
    * 在进入村庄前加载本场景专用背景图。
@@ -81,6 +107,7 @@ export class VillageScene extends Phaser.Scene {
     getItemTemplates().filter((item) => item.imageData).forEach((item) => {
       this.load.image(`item-custom-${item.id}`, item.imageData);
     });
+    this.load.image("system-item-sect-tianjian-token", "./public/assets/images/items/tianjian-token.svg");
     this.load.image("storage-background", "./public/assets/images/ui/storage/storage-background.png");
     this.load.image("storage-bag-frame", "./public/assets/images/ui/storage/storage-bag-frame.png");
     this.load.image("storage-category", "./public/assets/images/ui/storage/storage-category.png");
@@ -105,23 +132,8 @@ export class VillageScene extends Phaser.Scene {
     // 日后加入 NPC/怪物图片库后，只需要把这两个纹理键替换成对应模板图片。
     this.load.image("map-monster-portrait", "./public/assets/images/battle/swordsman.png");
 
-    // 以下资源来自 Pixso 的“第一章地图”页面。它们分别是六个顶部功能入口的原始图标，
-    // 单独加载后可以和真实游戏功能绑定，而不是把整张 UI 截图当成无法操作的背景图。
-    const pixsoUiPath = "./public/assets/images/ui/pixso-chapter-map";
-    this.load.image("pixso-ui-store", `${pixsoUiPath}/0194d4d1ee34c44b6a04712c9f468fa9982d0290.png`);
-    this.load.image("pixso-ui-settings", `${pixsoUiPath}/0e70e010a1c8c666f042837d2de57d9feae7a301.png`);
-    this.load.image("pixso-ui-gongfa", `${pixsoUiPath}/54732a7e111d65ebb274da026c2ce3ad132c3ade.png`);
-    this.load.image("pixso-ui-artifact", `${pixsoUiPath}/894c57b186cfffcff537eced68f536e5c7591e92.png`);
-    this.load.image("pixso-ui-spell", `${pixsoUiPath}/c9427f9152ab80ec524392a3d337d95ecc751bdb.png`);
-    this.load.image("pixso-ui-save", `${pixsoUiPath}/e2f4c5f9c8119a7ab11969c3487683b7f5f820d1.png`);
-    this.load.image("pixso-ui-brush", `${pixsoUiPath}/ce7168bd479ed095592186e3fa86566b2c5bebb0.png`);
-    this.load.image("pixso-ui-player-panel", `${pixsoUiPath}/990bba43cda098fe5d0d39b00aa396ab83511e38.png`);
-    this.load.image("pixso-ui-portrait", `${pixsoUiPath}/fca607c9608fc640f54b1a8605fa55470315f20d.png`);
-    this.load.image("pixso-ui-mini-map", `${pixsoUiPath}/ff4ac10e8a30b9eb4a08decec415289cdefdb87f.png`);
-    // 用户放在项目根目录的新版左上资料栏素材。
-    // 大地图左上角角色资料框：水墨底板与透明头像。
-    this.load.image("chapter-hud-profile-brush", "./public/assets/images/ui/chapter-map/profile-brush.png");
-    this.load.image("chapter-hud-profile-avatar", "./public/assets/images/ui/chapter-map/profile-avatar.png");
+    // 大地图与门派内部共用同一个角色顶栏素材入口，图标路径和显示版本保持一致。
+    preloadPlayerTopToolbarAssets(this);
     // 主线任务方向箭头：素材本身默认朝右，运行时根据古潭位置旋转。
     this.load.image("quest-direction-arrow", "./public/assets/images/ui/chapter-map/quest-direction-arrow.png");
     // NPC 尚未制作地图立绘时使用的任务问号。
@@ -152,7 +164,12 @@ export class VillageScene extends Phaser.Scene {
 
   create() {
     clearEditorRoute();
+    clearSceneResumeRoute();
     configureFullHdScene(this);
+    // 探索画面整体拉远一点：背景、主角和地图实例会按同一比例缩小，
+    // 但世界坐标、存档位置、建筑碰撞和地图编辑器资料都保持原值，不会因此错位。
+    this.cameras.main.setZoom(0.88);
+    this.worldCamera = this.cameras.main;
     // 场景只在这里装配业务服务；商店、功法、法术之间不再互相调用 UI 方法。
     this.itemCatalog = new ItemCatalog({
       resolveTexture: (item) => {
@@ -164,6 +181,12 @@ export class VillageScene extends Phaser.Scene {
     this.spellService = new SpellService({ player: gameState.player, catalog: this.itemCatalog });
     this.shopService = new ShopService({ player: gameState.player, world: gameState.world, catalog: this.itemCatalog, save: saveFirstChapterProgress });
     this.inventoryService = new InventoryService({ player: gameState.player, save: saveFirstChapterProgress });
+    this.sectAccessService = new SectAccessService({
+      player: gameState.player,
+      world: gameState.world,
+      inventoryService: this.inventoryService,
+      save: saveFirstChapterProgress,
+    });
     this.artifactService = new ArtifactLoadoutService({ player: gameState.player, catalog: this.itemCatalog, save: saveFirstChapterProgress });
     this.shortcutService = new CombatShortcutService({
       player: gameState.player,
@@ -196,9 +219,9 @@ export class VillageScene extends Phaser.Scene {
       shortcutService: this.shortcutService,
       saveArchiveService: this.saveArchiveService,
     });
-    // 大地图常驻一段轻柔的修仙纯音乐。浏览器若刚刷新而尚未允许播放，
-    // 会在玩家第一次点击或按键时自动开始。
-    startCultivationBackgroundMusic(this);
+    // 当前按用户要求暂时关闭大地图背景音乐；保留音乐生成函数，后续需要时可以重新启用。
+    // 进入地图时主动停止旧场景可能残留的循环声，但按钮点击音等界面音效不受影响。
+    stopCultivationBackgroundMusic();
     this.events.once("shutdown", () => stopCultivationBackgroundMusic());
     // Phaser 会复用同一个场景实例。上一次从设置面板退出到封面后，
     // JavaScript 属性仍可能指向已经销毁的面板和透明点击区；再次进入地图时，
@@ -222,6 +245,7 @@ export class VillageScene extends Phaser.Scene {
     this.mapTilesLoading = new Set();
     this.mapStreamElapsed = 0;
     this.drawQingyunMountain();
+    this.sectEntrancePrompt = new SectEntrancePrompt(this, (sect, buildingObject) => this.tryEnterSect(sect, buildingObject));
     // 读取地图编辑器保存的内容：在编辑器中放下的 NPC、怪物、建筑、传送点会出现在这里。
     this.renderEditorObjects();
     this.createPlayerAnimations();
@@ -236,20 +260,25 @@ export class VillageScene extends Phaser.Scene {
       .setOrigin(0.5, 0.86)
       // 地图缩小后，人物也随之缩小，保持自然的角色与环境比例。
       .setScale(0.48)
-      .setDepth(1);
+      .setDepth(this.worldActorDepth(spawnY));
 
     // 半透明椭圆模拟人物脚下的投影。它比人物层级低，移动时会同步更新位置，
     // 因此人物能稳定“站”在地面上，而不是看起来悬浮。
     this.playerShadow = this.add.ellipse(this.player.x, this.player.y + 17, 74, 22, 0x14221e, 0.32)
-      .setDepth(0);
+      .setDepth(this.worldActorDepth(spawnY) - 0.002);
     this.playerDirection = { row: 0, flipX: false };
     this.player.play("player-idle-row-0");
     // 地图角色头顶只保留姓名；文字底部贴近头顶并以角色 X 坐标为中心。
-    this.playerName = addText(this, spawnX, spawnY - 160, gameState.player.name, 16, "#fff9df", { align: "center" }).setOrigin(0.5, 1);
+    this.playerName = addText(this, spawnX, spawnY - 160, gameState.player.name, 16, "#fff9df", { align: "center" })
+      .setOrigin(0.5, 1)
+      .setDepth(this.worldActorDepth(spawnY) + 0.002);
 
     // 设置世界边界并让镜头平滑追随主角；UI 会在下方单独固定，不随镜头移动。
-    this.cameras.main.setBounds(0, 0, this.worldSize.width, this.worldSize.height);
-    this.cameras.main.startFollow(this.player, true, 0.09, 0.09);
+    this.worldCamera.setBounds(0, 0, this.worldSize.width, this.worldSize.height);
+    this.worldCamera.startFollow(this.player, true, 0.09, 0.09);
+    // 世界镜头缩小时，`scrollFactor(0)` 的 HUD 若仍由同一镜头绘制，也会被挤向屏幕中心。
+    // 因此增加一台 1:1 的界面镜头：地图与角色只由 worldCamera 绘制，所有固定界面只由 uiCamera 绘制。
+    this.uiCamera = this.cameras.add(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).setName("village-ui").setZoom(1);
 
     this.target = null;
     this.jadePosition = new Phaser.Math.Vector2(2440, 760);
@@ -294,11 +323,14 @@ export class VillageScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1501)
       .setVisible(false);
+    this.itemRewardPopup = new ItemRewardPopup(this);
 
     // “附近修士”卡片点击后出现的个人资料弹窗。
     this.createNearbyNpcProfilePanel();
 
     this.createHud();
+    this.syncExploreCameraLayers();
+    this.cameraLayerSyncElapsed = 0;
     this.updateQingyunQuestMarker();
     // 坐标仍每两秒更新到内存；真正写入浏览器则按玩家选择的 5/10/15/30 分钟执行。
     this.positionRememberElapsed = 0;
@@ -312,6 +344,8 @@ export class VillageScene extends Phaser.Scene {
       // 游戏界面始终按 1920×1080 的逻辑坐标排版；getUiPointer 会统一取用
       // Phaser 已换算好的坐标，避免浏览器缩放后再次换算而导致按钮点偏。
       const uiPointer = this.getUiPointer(pointer);
+      // 奖励弹窗显示时只允许关闭弹窗，绝不把点击穿透到地图寻路。
+      if (this.itemRewardPopup?.visible) return;
       // 打开任务日志时，所有地图点击都由日志界面接管，不能触发寻路。
       if (this.chapterMapHud?.isTaskLogOpen()) return;
       // 储物袋和商店一样是独立的最上层界面，绝不允许点击穿透到大地图。
@@ -345,6 +379,7 @@ export class VillageScene extends Phaser.Scene {
       }
       if (!this.dialog.visible && !this.npcProfilePanel?.visible && !this.settingsPanel && !this.featurePanel && !this.characterMenu.visible && !this.chapterMapHud?.isPointerOverHud(uiPointer) && uiPointer.y < 915) {
         // 镜头开始滚动后，pointer.x/y 只是屏幕坐标；worldX/worldY 才是地图上的真实位置。
+        this.sectEntrancePrompt?.hide();
         this.target = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
       }
     });
@@ -428,6 +463,29 @@ export class VillageScene extends Phaser.Scene {
     this.nearbyNameText = this.chapterMapHud.nearbyNameText;
     this.nearbyRealmText = this.chapterMapHud.nearbyRealmText;
     this.operationHint = this.chapterMapHud.operationHint;
+  }
+
+  /**
+   * 将探索地图与固定 UI 分给两台镜头绘制。
+   *
+   * 固定 UI 的唯一判定是两个 scrollFactor 都为 0：HUD、弹窗、背包与后续新增界面都遵守这一约定；
+   * 其余对象仍属于可跟随主角移动的世界。递归处理容器，避免容器内的文字或按钮被另一台镜头重复绘制。
+   */
+  syncExploreCameraLayers() {
+    if (!this.worldCamera || !this.uiCamera) return;
+    const screenUi = [];
+    const world = [];
+    const collected = new Set();
+    const collect = (display, inheritedUi = false) => {
+      if (!display || collected.has(display)) return;
+      collected.add(display);
+      const isScreenUi = inheritedUi || (display.scrollFactorX === 0 && display.scrollFactorY === 0);
+      (isScreenUi ? screenUi : world).push(display);
+      if (Array.isArray(display.list)) display.list.forEach((child) => collect(child, isScreenUi));
+    };
+    this.children.list.forEach((display) => collect(display));
+    this.worldCamera.ignore(screenUi);
+    this.uiCamera.ignore(world);
   }
 
   /** 用浏览器画布生成圆角渐变按钮，避免 Graphics 渐变出现可见的拼接线。 */
@@ -622,6 +680,18 @@ export class VillageScene extends Phaser.Scene {
     return Boolean(template.merchant || object?.merchant || /商人|行商|杂货/.test(`${object?.name || ""}${profile.identity || ""}`));
   }
 
+  /**
+   * 未配置大地图立绘的 NPC 会显示「问号 + 圆牌」。圆牌只放一个识别字，
+   * 方便玩家在地图上快速区分不同角色；商人始终显示“商”，其余取当前名称
+   * 的第一个可见字符。接引人名称会在渲染前替换为“天剑宗接引人”，因此会
+   * 自然显示“天”，不需要再为门派 NPC 额外写死分支。
+   */
+  getNpcMapMarkerText(object) {
+    if (this.isMerchantNpc(object)) return "商";
+    const name = String(object?.name || object?.npcTemplate?.name || "修士").trim();
+    return Array.from(name)[0] || "修";
+  }
+
   activateNpcProfileAction() {
     const object = this.npcProfileObject;
     if (!object) return;
@@ -740,13 +810,16 @@ export class VillageScene extends Phaser.Scene {
       width: 814,
       height: 660,
       noticeY: 262,
+      // 顶部标题区不计入正文中心；按钮组稍向下放置，使上下留白在视觉上完全平衡。
+      buttonGroupY: 48,
+      buttonGap: 61,
       buttons: [
-        { label: "进入全屏", variant: "secondary", y: -160, onClick: () => this.enterFullscreen() },
-        { label: "窗口化", variant: "secondary", y: -99, onClick: () => this.exitFullscreen() },
-        { label: "导出游戏数据", variant: "utility", y: -38, onClick: () => this.exportGameData() },
-        { label: "导入游戏数据", variant: "utility", y: 23, onClick: () => this.importGameData() },
-        { label: "保存并退出到封面", variant: "primary", y: 84, onClick: () => this.exitToCover() },
-        { label: "关闭", variant: "danger", y: 145, onClick: () => this.closeGameSettings() },
+        { label: "进入全屏", variant: "secondary", onClick: () => this.enterFullscreen() },
+        { label: "窗口化", variant: "secondary", onClick: () => this.exitFullscreen() },
+        { label: "导出游戏数据", variant: "utility", onClick: () => this.exportGameData() },
+        { label: "导入游戏数据", variant: "utility", onClick: () => this.importGameData() },
+        { label: "保存并退出到封面", variant: "primary", onClick: () => this.exitToCover() },
+        { label: "关闭", variant: "danger", onClick: () => this.closeGameSettings() },
       ],
       onClose: () => this.resetGameSettingsDialog(),
     });
@@ -926,6 +999,22 @@ export class VillageScene extends Phaser.Scene {
         npcTemplateId: "npc-qixia-merchant",
       });
     }
+    // 先统一挂载所有模板，再判断“哪个 NPC 位于门派旁边”。这样无论对象在文件中的先后顺序如何，
+    // 接引人识别都不会因为门派建筑尚未遍历到而失败。
+    objects.forEach((object) => {
+      if (object.type === "monster" && object.monsterTemplateId) {
+        const template = getMonsterTemplate(object.monsterTemplateId);
+        if (template) Object.assign(object, { name: template.name, battle: template, drops: template.drops });
+      }
+      if (object.type === "npc" && object.npcTemplateId) {
+        const template = getNpcTemplate(object.npcTemplateId);
+        if (template) Object.assign(object, { name: template.name, dialogue: template.dialogue, npcTemplate: template });
+      }
+      if (object.type === "building" && object.buildingTemplateId) {
+        const template = getBuildingTemplate(object.buildingTemplateId);
+        if (template) Object.assign(object, { name: template.name, buildingTemplate: template });
+      }
+    });
     this.editorObjects = objects;
     this.editorActors = new Map();
     objects.forEach((object) => {
@@ -942,14 +1031,24 @@ export class VillageScene extends Phaser.Scene {
         const template = getBuildingTemplate(object.buildingTemplateId);
         if (template) Object.assign(object, { name: template.name, buildingTemplate: template });
       }
+      if (object.type === "npc") {
+        const guideContext = this.sectAccessService.getGuideContext(object, objects);
+        if (guideContext?.guide?.title) object.name = guideContext.guide.title;
+      }
       // 已被这个角色击败的怪物，不会再次出现在地图中。
       if (object.type === "monster" && gameState.world.defeatedMonsterIds.includes(object.id)) return;
       const info = MAP_OBJECT_TYPES[object.type] || MAP_OBJECT_TYPES.npc;
-      const marker = this.add.container(object.x, object.y).setDepth(6);
-      const shadow = this.add.ellipse(0, 4, 50, 13, 0x17221e, 0.32);
+      const instanceScale = Number(object.scale) || 1;
+      const markerDepth = object.type === "building"
+        ? this.worldBuildingDepth(this.worldObjectSortY(object))
+        : this.worldActorDepth(object.y);
+      const marker = this.add.container(object.x, object.y).setDepth(markerDepth);
+      const shadow = this.add.ellipse(0, 4 * instanceScale, 50, 13, 0x17221e, 0.32).setScale(instanceScale);
       let portrait;
       let questionMark = null;
       let markerNumber = null;
+      let labelY = -58 * instanceScale;
+      let typeLabelY = -39 * instanceScale;
       const isMerchant = object.type === "npc" && this.isMerchantNpc(object);
       // 商人与普通修士一样：没有专用“大地图立绘”时只显示问号交互标记，
       // 不直接把对话立绘摆到地图上。
@@ -958,25 +1057,26 @@ export class VillageScene extends Phaser.Scene {
         if (npcNeedsMapPortrait) {
           // 还没有游戏地图立绘：显示「问号 + 圆牌」，避免把对话头像误当作地图角色。
           shadow.setVisible(false);
-          portrait = this.add.circle(0, 20, 23, 0xd1c5af, 1).setStrokeStyle(2, 0x5b4d40);
-          questionMark = this.add.image(0, -37, "npc-map-question-mark").setDisplaySize(43, 56).setOrigin(0.5);
-          markerNumber = addText(this, 0, 20, isMerchant ? "商" : "1", isMerchant ? 21 : 19, "#30271f", { strokeThickness: 0 }).setOrigin(0.5);
+          portrait = this.add.circle(0, 20 * instanceScale, 23, 0xd1c5af, 1).setStrokeStyle(2, 0x5b4d40).setScale(instanceScale);
+          questionMark = this.add.image(0, -37 * instanceScale, "npc-map-question-mark").setDisplaySize(43 * instanceScale, 56 * instanceScale).setOrigin(0.5);
+          const markerText = this.getNpcMapMarkerText(object);
+          markerNumber = addText(this, 0, 20 * instanceScale, markerText, markerText === "商" ? 21 : 19, "#30271f", { strokeThickness: 0 }).setOrigin(0.5).setScale(instanceScale);
         } else {
           // 已上传专用地图立绘时，按原比例放到角色站立点。
-          portrait = this.add.image(0, 0, "player-idle-5dir", 0).setOrigin(0.5, 0.86).setScale(0.32);
+          portrait = this.add.image(0, 0, "player-idle-5dir", 0).setOrigin(0.5, 0.86).setScale(0.32 * instanceScale);
         }
         if (!npcNeedsMapPortrait && object.npcTemplate?.mapPortraitData) {
           const textureKey = `map-npc-custom-${object.npcTemplate.id}`;
           const applyNpcPortrait = () => {
             const source = this.textures.get(textureKey).getSourceImage();
-            const scale = Math.min(120 / source.width, 135 / source.height);
+            const scale = Math.min(120 / source.width, 135 / source.height) * instanceScale;
             if (portrait.active) portrait.setTexture(textureKey).setDisplaySize(source.width * scale, source.height * scale);
           };
           if (this.textures.exists(textureKey)) applyNpcPortrait();
           else this.textures.addBase64(textureKey, object.npcTemplate.mapPortraitData, applyNpcPortrait);
         }
       } else if (object.type === "monster") {
-        portrait = this.add.image(0, 0, "map-monster-portrait").setOrigin(0.5, 0.87).setScale(0.34).setTint(0xe9b4b4);
+        portrait = this.add.image(0, 0, "map-monster-portrait").setOrigin(0.5, 0.87).setScale(0.34 * instanceScale).setTint(0xe9b4b4);
         // 怪物编辑器上传的是 Base64 图片数据。首次进入地图时异步注册纹理，
         // 注册完成后直接替换当前立绘，不需要玩家重新进入场景。
         const appearance = resolveMonsterAppearance(object.battle);
@@ -985,7 +1085,7 @@ export class VillageScene extends Phaser.Scene {
           const applyMonsterPortrait = () => {
             if (!portrait.active || !this.textures.exists(textureKey)) return;
             const source = this.textures.get(textureKey).getSourceImage();
-            const scale = Math.min(105 / source.width, 130 / source.height, 1);
+            const scale = Math.min(105 / source.width, 130 / source.height, 1) * instanceScale;
             portrait.setTexture(textureKey).clearTint().setDisplaySize(source.width * scale, source.height * scale);
           };
           if (this.textures.exists(textureKey)) {
@@ -999,18 +1099,56 @@ export class VillageScene extends Phaser.Scene {
             image.src = appearance.staticImageData;
           }
         }
+      } else if (object.type === "building") {
+        const appearance = resolveBuildingAppearance(object.buildingTemplate);
+        const width = appearance.width * instanceScale;
+        const height = appearance.height * instanceScale;
+        const originY = appearance.anchor === "center" ? 0.5 : 1;
+        shadow.setVisible(false);
+        portrait = this.add.image(0, 0, "__WHITE").setOrigin(0.5, originY).setTint(info.color)
+          .setDisplaySize(appearance.imageData ? width : 58 * instanceScale, appearance.imageData ? height : 58 * instanceScale);
+        labelY = appearance.anchor === "center" ? -height / 2 - 25 : -height - 25;
+        typeLabelY = labelY + 20;
+        if (appearance.imageData) {
+          const textureKey = getBuildingAppearanceTextureKey(object.buildingTemplate, "map-building-custom");
+          const applyBuildingImage = () => {
+            if (!portrait.active || !this.textures.exists(textureKey)) return;
+            portrait.setTexture(textureKey).clearTint().setDisplaySize(width, height);
+          };
+          if (this.textures.exists(textureKey)) applyBuildingImage();
+          else {
+            const image = new Image();
+            image.onload = () => {
+              if (!this.textures.exists(textureKey)) this.textures.addImage(textureKey, image);
+              applyBuildingImage();
+            };
+            image.src = appearance.imageData;
+          }
+        }
       } else {
-        portrait = this.add.circle(0, -6, 22, info.color, 0.92).setStrokeStyle(3, 0xfff0bd);
+        portrait = this.add.circle(0, -6 * instanceScale, 22, info.color, 0.92).setStrokeStyle(3, 0xfff0bd).setScale(instanceScale);
       }
       // 问号标记严格保持图 2 的简洁样式；姓名与交互提示在靠近后的左下信息卡显示。
-      const label = npcNeedsMapPortrait ? null : addText(this, 0, -58, object.name, 14, "#fff8de", { origin: 0.5 });
-      const typeLabel = npcNeedsMapPortrait ? null : addText(this, 0, -39, object.type === "monster" ? "怪物 · 按 E 战斗" : isMerchant ? "商人 · 按 E 购物" : object.type === "npc" ? "NPC · 按 E 对话" : info.name, 11, "#e2efcf", { origin: 0.5, strokeThickness: 2 });
+      const label = npcNeedsMapPortrait ? null : addText(this, 0, labelY, object.name, 14, "#fff8de", { origin: 0.5 });
+      const typeLabel = npcNeedsMapPortrait ? null : addText(this, 0, typeLabelY, object.type === "monster" ? "怪物 · 按 E 战斗" : isMerchant ? "商人 · 按 E 购物" : object.type === "npc" ? "NPC · 按 E 对话" : info.name, 11, "#e2efcf", { origin: 0.5, strokeThickness: 2 });
       marker.add([shadow, portrait, questionMark, markerNumber, label, typeLabel].filter(Boolean));
+      if (object.type === "npc") {
+        // NPC 既保留靠近后按 E，也支持直接点击；距离不足时先自动走近，避免接引流程只靠键盘。
+        const interactionZone = this.add.zone(0, -22 * instanceScale, 110 * instanceScale, 150 * instanceScale)
+          .setInteractive({ useHandCursor: true });
+        marker.add(interactionZone);
+        interactionZone.on("pointerdown", (_pointer, _localX, _localY, event) => {
+          event?.stopPropagation?.();
+          const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, object.x, object.y);
+          if (distance <= 74) this.interactWithMapObject(object);
+          else this.target = new Phaser.Math.Vector2(object.x, object.y);
+        });
+      }
       if (questionMark) {
         // 问号持续轻轻上下浮动，提示这里有尚未制作地图立绘的可交互 NPC。
         this.tweens.add({
           targets: questionMark,
-          y: -43,
+          y: -43 * instanceScale,
           // 一次上升或下降 0.42 秒；完整往返约 0.84 秒，比旧版更灵敏，
           // Sine.InOut 在两个折返点都会自然减速，不会出现生硬跳动。
           duration: 420,
@@ -1024,6 +1162,13 @@ export class VillageScene extends Phaser.Scene {
   }
 
   update(_, delta) {
+    // 面板、地图块和奖励弹窗可能在运行中才创建；低频同步即可保证它们进入正确镜头，
+    // 又不需要在每个 UI 模块里手工维护镜头名单。
+    this.cameraLayerSyncElapsed += delta;
+    if (this.cameraLayerSyncElapsed >= 250) {
+      this.cameraLayerSyncElapsed = 0;
+      this.syncExploreCameraLayers();
+    }
     this.positionRememberElapsed += delta;
     if (this.positionRememberElapsed >= 2000) {
       this.positionRememberElapsed = 0;
@@ -1036,6 +1181,10 @@ export class VillageScene extends Phaser.Scene {
         this.rememberPlayerPosition();
         if (saveFirstChapterProgress()) this.saveArchiveService.markAutoSaved();
       }
+    }
+    if (this.itemRewardPopup?.visible) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.itemRewardPopup.hide();
+      return;
     }
     if (this.npcProfilePanel?.visible) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) this.closeNearbyNpcProfile();
@@ -1088,12 +1237,15 @@ export class VillageScene extends Phaser.Scene {
       }
     }
     this.updatePlayerAnimation(isMoving);
-    this.playerName.setPosition(this.player.x, this.player.y - this.player.displayHeight * this.player.originY - 8);
-    this.playerShadow.setPosition(this.player.x, this.player.y + 17);
+    const playerDepth = this.worldActorDepth(this.player.y);
+    this.player.setDepth(playerDepth);
+    this.playerName.setPosition(this.player.x, this.player.y - this.player.displayHeight * this.player.originY - 8).setDepth(playerDepth + 0.002);
+    this.playerShadow.setPosition(this.player.x, this.player.y + 17).setDepth(playerDepth - 0.002);
     // 同步小地图的蓝色主角点，并记录走过的区域来逐步揭开探索迷雾。
     this.chapterMapHud?.updateMiniMap(this.player.x, this.player.y, this.worldSize);
     this.updateQuestGuide();
     this.updateNearbyInteraction();
+    this.updateNearbySectEntrance();
     const jadeDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.jadePosition.x, this.jadePosition.y);
     const canDiscoverJade = this.questService.canDiscoverAncientJade();
     if (canDiscoverJade && jadeDistance < 300) {
@@ -1160,17 +1312,89 @@ export class VillageScene extends Phaser.Scene {
       // 地图上的问号与编号只用于引导；进入对话后隐藏，避免看起来像出现两个问题。
       this.dialogMapObjectId = object.id;
       this.setDialogueMapMarkerVisible(false);
+      const guideContext = this.sectAccessService.getGuideContext(object, this.editorObjects);
+      if (guideContext) {
+        const ownsToken = this.sectAccessService.hasAccessToken(guideContext.sect);
+        this.dialogNameText.setText(guideContext.guide.title || object.name || "接引人");
+        this.openDialogue(
+          ownsToken ? guideContext.guide.repeatDialogue : guideContext.guide.dialogue,
+          ownsToken ? null : () => this.grantSectGuideToken(object),
+          object.npcTemplate?.portraitData,
+        );
+        return;
+      }
       this.dialogNameText.setText((object.name || "修士").replace(/^栖霞村/, ""));
       this.openDialogue(object.dialogue, null, object.npcTemplate?.portraitData, object.npcTemplate?.dialogueTree);
     } else if (object.type === "monster") {
       this.scene.start(SceneKeys.BATTLE, { mapMonster: object });
     } else if (object.type === "building") {
-      this.dialogNameText.setText(object.name || "建筑");
-      this.openDialogue([object.buildingTemplate?.interactionText || `${object.name}：目前是第一章原型建筑。`]);
+      const sect = this.sectAccessService.resolveForBuilding(object);
+      if (sect) {
+        const appearance = resolveBuildingAppearance(object.buildingTemplate);
+        this.showSectEntrancePrompt(sect, object, appearance, Number(object.scale) || 1);
+      } else {
+        this.dialogNameText.setText(object.name || "建筑");
+        this.openDialogue([object.buildingTemplate?.interactionText || `${object.name}：目前是第一章原型建筑。`]);
+      }
     } else {
       this.dialogNameText.setText(object.name || "提示");
       this.openDialogue([`${object.name}：传送点已被记录。后续区域地图完成后，可以在这里配置目的地。`]);
     }
+  }
+
+  /** 靠近门派碰撞边缘后自动显示入口；离开范围立即隐藏。 */
+  updateNearbySectEntrance() {
+    let nearest = null;
+    this.editorActors?.forEach((actor) => {
+      if (actor.object.type !== "building") return;
+      const sect = this.sectAccessService.resolveForBuilding(actor.object);
+      if (!sect) return;
+      const distance = getDistanceToBuildingCollision(this.player, actor.object);
+      const range = Math.max(0, Number(sect.building?.autoPromptRange) || 320);
+      if (distance > range || (nearest && distance >= nearest.distance)) return;
+      nearest = { object: actor.object, sect, distance };
+    });
+    if (!nearest) {
+      this.sectEntrancePrompt.hide();
+      return;
+    }
+    const appearance = resolveBuildingAppearance(nearest.object.buildingTemplate);
+    this.showSectEntrancePrompt(nearest.sect, nearest.object, appearance, Number(nearest.object.scale) || 1);
+  }
+
+  /** 把自动出现的入口按钮放在建筑画面中央。 */
+  showSectEntrancePrompt(sect, buildingObject, appearance, instanceScale = 1) {
+    const displayedHeight = (Number(appearance?.height) || 256) * instanceScale;
+    const originOffset = appearance?.anchor === "center" ? 0 : displayedHeight / 2;
+    const view = this.cameras.main.worldView;
+    // 巨型建筑可能只有一角露在屏幕里；入口按钮要限制在当前可视区域，且避开右侧 HUD。
+    const x = Phaser.Math.Clamp(buildingObject.x, view.left + 150, view.right - 400);
+    const y = Phaser.Math.Clamp(buildingObject.y - originOffset, view.top + 150, view.bottom - 180);
+    this.sectEntrancePrompt.show({ sect, buildingObject, x, y });
+  }
+
+  /** 门派入口统一走准入领域服务；令牌只判定持有，不会被消耗。 */
+  tryEnterSect(sect) {
+    this.sectEntrancePrompt.hide();
+    const access = this.sectAccessService.evaluate(sect.id);
+    if (!access.ok) {
+      this.dialogNameText.setText(sect.name);
+      this.openDialogue([
+        `山门禁制尚未认可你的身份。${access.message}`,
+        "可与宗门附近的接引人完成对话，取得入门令牌后再来。",
+      ]);
+      return;
+    }
+    this.rememberPlayerPosition();
+    saveFirstChapterProgress();
+    this.scene.start(SceneKeys.SECT, { sectId: sect.id });
+  }
+
+  /** 完成接引人对话后由服务发放令牌，再显示通用获得物品弹窗。 */
+  grantSectGuideToken(npcObject) {
+    const result = this.sectAccessService.grantGuideToken(npcObject, this.editorObjects);
+    if (!result.ok) return;
+    this.itemRewardPopup.show(this.itemCatalog.getById(result.itemId), result.quantity);
   }
 
   /** 开始一段可翻页的对话；最后一句结束后执行可选回调。 */
@@ -1494,7 +1718,7 @@ export class VillageScene extends Phaser.Scene {
     const nextY = Phaser.Math.Clamp(this.player.y + dy, 110, this.worldSize.height - 80);
     // 建筑模板的碰撞顶点由编辑器按“图片相对坐标”保存。地图实例只带模板 ID，
     // 因此更新模板后，已摆放建筑无需重放也会立即使用新的碰撞范围。
-    if (this.isPositionBlockedByBuilding(nextX, nextY)) {
+    if (this.isMovementBlockedByBuilding(this.player.x, this.player.y, nextX, nextY)) {
       this.target = null;
       return;
     }
@@ -1505,23 +1729,11 @@ export class VillageScene extends Phaser.Scene {
     this.updatePlayerDirection(dx, dy);
   }
 
-  /** 判断角色脚下坐标是否落入任一启用的建筑多边形。 */
-  isPositionBlockedByBuilding(x, y) {
+  /** 判断本次脚底移动线段是否进入或穿过任一建筑碰撞多边形。 */
+  isMovementBlockedByBuilding(fromX, fromY, toX, toY) {
     if (!this.editorActors) return false;
-    for (const { object } of this.editorActors.values()) {
-      const template = object.type === "building" ? object.buildingTemplate : null;
-      const collision = template?.collision;
-      if (!collision?.enabled || !Array.isArray(collision.points) || collision.points.length < 3) continue;
-      const width = Number(template.display?.width) || 256;
-      const height = Number(template.display?.height) || 256;
-      const top = template.display?.anchor === "center" ? object.y - height / 2 : object.y - height;
-      const vertices = collision.points.map((point) => new Phaser.Geom.Point(
-        object.x + (Number(point.x) - 0.5) * width,
-        top + Number(point.y) * height,
-      ));
-      if (Phaser.Geom.Polygon.Contains(new Phaser.Geom.Polygon(vertices), x, y)) return true;
-    }
-    return false;
+    const objects = Array.from(this.editorActors.values(), ({ object }) => object);
+    return isMovementBlockedByBuildings({ x: fromX, y: fromY }, { x: toX, y: toY }, objects);
   }
 
   /** 把当前角色脚下坐标记录到全局状态，供战斗返回和存档恢复使用。 */

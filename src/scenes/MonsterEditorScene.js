@@ -299,6 +299,22 @@ export class MonsterEditorScene extends Phaser.Scene {
     if (this.loadingMonsterTextureKeys.has(key)) return;
     this.loadingMonsterTextureKeys.add(key);
     const imageData = monster.imageData;
+    // 项目文件仓库保存后是 /assets/... 路径；旧浏览器资料才是 Base64。两者都要能预览。
+    if (!imageData.startsWith("data:")) {
+      const image = new Image();
+      image.onload = () => {
+        this.loadingMonsterTextureKeys.delete(key);
+        if (this.textures.exists(key)) this.textures.remove(key);
+        this.textures.addImage(key, image);
+        if (this.selectedId === monster.id) this.refresh();
+      };
+      image.onerror = () => {
+        this.loadingMonsterTextureKeys.delete(key);
+        if (this.selectedId === monster.id) this.showNotice("项目中的怪物图片读取失败，请重新上传后保存。", "error");
+      };
+      image.src = imageData;
+      return;
+    }
     const handleLoad = (loadedKey) => {
       if (loadedKey !== key) return;
       cleanup();
@@ -434,7 +450,7 @@ export class MonsterEditorScene extends Phaser.Scene {
         this.commitDomInputs();
         const previousImageData = target.imageData;
         target.imageData = String(reader.result);
-        // 新图片和旧模板图片一起压缩，避免任意一张历史大图继续占满 localStorage。
+        // 新图片和旧模板图片一起转为 WebP 后写入项目 assets 文件夹。
         const saved = await this.saveTemplatesWithCompressedImages();
         if (this.selectedId === targetId) {
           if (saved) {
@@ -445,7 +461,7 @@ export class MonsterEditorScene extends Phaser.Scene {
             const current = this.templates.find((monster) => monster.id === targetId);
             if (current) current.imageData = previousImageData;
             this.refresh();
-            this.showNotice("图片保存失败：浏览器本地空间不足，请先导出资料备份。", "error");
+            this.showNotice("图片保存失败：无法写入项目文件夹，请确认通过启动游戏.bat运行。", "error");
           }
         }
       };
@@ -469,7 +485,7 @@ export class MonsterEditorScene extends Phaser.Scene {
       const current = this.templates.find((monster) => monster.id === targetId);
       if (current) current.imageData = previousImageData;
       this.refresh();
-      this.showNotice("立绘清除失败：本地保存空间不足。", "error");
+      this.showNotice("立绘清除失败：无法写入项目文件夹。", "error");
     }
   }
 
@@ -488,13 +504,13 @@ export class MonsterEditorScene extends Phaser.Scene {
     const saved = await this.saveTemplatesWithCompressedImages();
     // 先重绘页面，再创建提示层；否则提示会被 refresh() 新绘制的工作区遮挡。
     this.refresh();
-    if (saved) this.showNotice("保存成功：怪物立绘与全部属性已写入本地数据。", "success");
-    else this.showNotice("保存失败：本地空间不足或浏览器拒绝写入，请缩小图片后重试。", "error");
+    if (saved) this.showNotice("保存成功：怪物资料与图片已写入项目文件夹。", "success");
+    else this.showNotice("保存失败：无法写入项目文件夹，请确认本地服务器正在运行。", "error");
   }
 
   /**
    * 怪物立绘会用于编辑器、地图和战斗，保留比物品图标更高的分辨率。
-   * 保存失败时逐级减小图片；每次都整理全部模板，旧版遗留的大图也能自动瘦身。
+   * 保存时逐级减小图片；旧版遗留的大图也会一并迁移至项目 assets 文件夹。
    */
   async saveTemplatesWithCompressedImages() {
     const prepared = this.templates.map(normalizeMonster);

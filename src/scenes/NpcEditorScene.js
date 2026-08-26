@@ -241,8 +241,8 @@ export class NpcEditorScene extends Phaser.Scene {
     const card = this.track(this.add.rectangle(175, y + 39, 322, 80, active ? 0x4a311b : 0x292827, 1)
       .setStrokeStyle(2, active ? 0xd8ad58 : 0x3f3c38).setInteractive({ useHandCursor: true }));
     this.track(this.add.circle(58, y + 39, 30, 0x1c1c1b).setStrokeStyle(2, 0x65605a));
-    // 头像显示尺寸与左侧外圆直径一致（60px）。
-    this.drawPortrait(item, 58, y + 37, 60, true, "avatar");
+    // 头像在圆框内居中显示；超出圆形的区域由 drawPortrait 的蒙版自动裁掉。
+    this.drawPortrait(item, 58, y + 39, 56, true, "avatar");
     this.text(109, y + 19, item.name || "未命名 NPC", 20, "#f2ce4a", { strokeThickness: 2 });
     this.text(109, y + 48, [item.profile.realm, item.profile.sect].filter(Boolean).join(" · ") || "未填写资料", 14, "#9f9991", { strokeThickness: 1 });
     card.on("pointerdown", () => { this.selectedId = item.id; this.filteredItems = null; this.refresh(); });
@@ -271,8 +271,8 @@ export class NpcEditorScene extends Phaser.Scene {
     this.drawPortrait(item, 1006, 295, 205, false, "portrait");
     this.text(1006, 468, "立绘(对话时显示)", 17, "#aaa39b", { strokeThickness: 1 }).setOrigin(0.5);
     this.track(this.add.circle(1254, 221, 48, 0x1c1c1c).setStrokeStyle(2, 0x66625d));
-    // 头像显示尺寸与右侧外圆直径一致（96px）。
-    this.drawPortrait(item, 1254, 219, 96, true, "avatar");
+    // 头像在圆框内居中显示；保留 2px 内边距给圆框描边。
+    this.drawPortrait(item, 1254, 221, 92, true, "avatar");
     this.text(1254, 275, "立绘自动裁切头像", 15, "#aaa39b", { strokeThickness: 1 }).setOrigin(0.5);
     this.button(1148, 335, 220, "上传立绘", () => this.pickPortrait(), { height: 45, fill: 0x9d8248, hover: 0xb09255, stroke: 0x9d8248 });
     this.text(1258, 407, "上传一次立绘即可同步全部头像", 15, "#8f8a83", { strokeThickness: 1 }).setOrigin(0.5);
@@ -550,10 +550,15 @@ export class NpcEditorScene extends Phaser.Scene {
   }
 
   drawPortrait(item, x, y, size, compact, type = "portrait") {
-    const imageData = item.portraitData || item.avatarData || item.imageData || "";
+    // 历史 NPC 已有单独裁好的小头像；优先使用它，不能再拿整张立绘重复裁切。
+    const imageData = type === "avatar"
+      ? (item.avatarData || item.imageData || item.portraitData || "")
+      : (item.portraitData || item.imageData || item.avatarData || "");
     // 空白新建 NPC 不显示系统示例人物，等待用户自行上传头像和立绘。
     if (!imageData && item.isNew) return;
-    const textureType = "portrait";
+    // 立绘和头像可能是两张不同的历史图片，必须各用独立纹理键；
+    // 否则先绘制列表头像后，会错误复用到右侧立绘区域。
+    const textureType = type === "avatar" ? "avatar" : "portrait";
     const customKey = `npc-manage-${textureType}-${item.id}`;
     if (imageData && !this.textures.exists(customKey)) this.loadNpcTexture(item, textureType, imageData);
     const textureKey = imageData && this.textures.exists(customKey) ? customKey : "npc-editor-default";
@@ -565,11 +570,29 @@ export class NpcEditorScene extends Phaser.Scene {
     const maxWidth = size;
     const maxHeight = compact ? size : size * 1.46;
     if (compact) {
-      // 头像使用立绘顶部中央约 55% 宽度，只保留头部和少量肩膀。
-      const cropSize = Math.min(source.width, source.height) * 0.55;
-      const cropX = Math.max(0, (source.width - cropSize) / 2);
-      const cropY = Math.min(Math.max(0, source.height * 0.04), Math.max(0, source.height - cropSize));
-      portrait.setCrop(cropX, cropY, cropSize, cropSize).setDisplaySize(size, size).setOrigin(0.5, 0.5);
+      const nearlySquare = Math.abs(source.width - source.height) / Math.max(source.width, source.height) < 0.12;
+      if (nearlySquare) {
+        // 已有的头像资源本身就是方形裁切图，直接等比填满圆框，不再二次放大或截断。
+        portrait.setDisplaySize(size, size).setOrigin(0.5, 0.5);
+      } else {
+        // 新上传的只有立绘时，取上方中央的头肩区域生成头像。
+        const cropSize = Math.min(source.width, source.height) * 0.55;
+        const cropY = Math.min(Math.max(0, source.height * 0.04), Math.max(0, source.height - cropSize));
+        // Phaser 的 setCrop 不会改变原始图片的定位原点，圆形蒙版下容易把胸口而非头肩放进圆内。
+        // 因此保留完整立绘，按“头肩裁切区域”的尺寸缩放并移动到圆心；再由下方的圆形蒙版裁掉其余部分。
+        const scale = size / cropSize;
+        const cropTop = y - size / 2;
+        portrait.setScale(scale).setOrigin(0.5, 0).setPosition(x, cropTop - cropY * scale);
+      }
+      // 头像不是把方图缩成圆，而是用真正的圆形 GeometryMask 收口：
+      // 图片始终以圆心为中心，任何越出圆周的头发、衣服或透明像素都会被裁掉。
+      // 蒙版半径与显示尺寸一致，外层圆框还能留下 2px 的描边安全边距。
+      const avatarMask = this.track(this.add.graphics());
+      avatarMask.fillStyle(0xffffff, 1);
+      avatarMask.fillCircle(x, y, size / 2);
+      portrait.setMask(avatarMask.createGeometryMask());
+      // 蒙版仅参与裁切，不能渲染成一个白色实心圆。
+      avatarMask.setVisible(false);
     } else {
       const scale = Math.min(maxWidth / source.width, maxHeight / source.height);
       portrait.setDisplaySize(source.width * scale, source.height * scale);
@@ -625,6 +648,9 @@ export class NpcEditorScene extends Phaser.Scene {
     item.portraitData = data;
     item.avatarData = data;
     item.imageData = data;
+    // 新立绘上传后，头像也应立即换成同一张图；清掉旧头像纹理，下一次绘制会重新读取新图。
+    const avatarTextureKey = `npc-manage-avatar-${item.id}`;
+    if (this.textures.exists(avatarTextureKey)) this.textures.remove(avatarTextureKey);
     this.loadNpcTexture(item, "portrait", data, true);
   }
 
@@ -707,7 +733,7 @@ export class NpcEditorScene extends Phaser.Scene {
       }
     }
     this.isSaving = false;
-    this.showNotice("保存失败：浏览器本地空间不足，请先导出资料备份");
+    this.showNotice("保存失败：无法写入项目文件夹，请确认本地服务器正在运行");
   }
 
   /** 保存前强制提交所有框内的文字，包含仍在编辑、尚未失焦的灵根数值。 */

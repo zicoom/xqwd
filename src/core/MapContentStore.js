@@ -1,8 +1,9 @@
 /**
  * 地图内容仓库。
- * 浏览器版无法直接修改项目中的 JSON 文件，因此编辑器先把玩家放置的内容保存到浏览器本地。
+ * 开发服务器会把地图摆放内容保存到项目 data/editor/map-content.json。
  * 游戏场景和地图编辑器都会读取这里的数据，所以点击“保存”后重新进入游戏即可立刻生效。
  */
+import { getLegacyEditorData, loadEditorData, saveEditorData } from "./EditorFileRepository.js";
 const MAP_CONTENT_SAVE_KEY = "xuanqiong-wendao-map-content-v1";
 
 /** 编辑器第一版允许放置的四类地图对象。 */
@@ -15,27 +16,27 @@ export const MAP_OBJECT_TYPES = Object.freeze({
 
 /** 读取某张地图的已编辑对象。 */
 export function getMapObjects(mapId) {
-  try {
-    const allMaps = JSON.parse(localStorage.getItem(MAP_CONTENT_SAVE_KEY) || "{}");
-    // 旧版本对象只有“名称和坐标”。这里补上默认配置，保证以前放好的对象也能直接交互。
-    return Array.isArray(allMaps[mapId]) ? allMaps[mapId].map(normalizeMapObject) : [];
-  } catch (error) {
-    console.warn("地图内容读取失败：", error);
-    return [];
+  const result = loadEditorData("map-content");
+  if (result.ok) return Array.isArray(result.data?.[mapId]) ? result.data[mapId].map(normalizeMapObject) : [];
+  const legacy = result.ok ? null : getLegacyEditorData(MAP_CONTENT_SAVE_KEY);
+  if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+    if (result.missing) {
+      const migrated = saveEditorData("map-content", legacy);
+      if (migrated.ok) return Array.isArray(migrated.data?.[mapId]) ? migrated.data[mapId].map(normalizeMapObject) : [];
+    }
+    return Array.isArray(legacy[mapId]) ? legacy[mapId].map(normalizeMapObject) : [];
   }
+  if (!result.unavailable) console.warn("地图内容读取失败：", result.error);
+  return [];
 }
 
 /** 保存某张地图的完整对象列表。 */
 export function saveMapObjects(mapId, objects) {
-  try {
-    const allMaps = JSON.parse(localStorage.getItem(MAP_CONTENT_SAVE_KEY) || "{}");
-    allMaps[mapId] = objects;
-    localStorage.setItem(MAP_CONTENT_SAVE_KEY, JSON.stringify(allMaps));
-    return true;
-  } catch (error) {
-    console.warn("地图内容保存失败：", error);
-    return false;
-  }
+  const current = loadEditorData("map-content");
+  const allMaps = current.ok ? current.data : (getLegacyEditorData(MAP_CONTENT_SAVE_KEY) || {});
+  const saved = saveEditorData("map-content", { ...allMaps, [mapId]: objects.map(normalizeMapObject) });
+  if (!saved.ok) console.warn("地图内容保存失败：", saved.error);
+  return saved.ok;
 }
 
 /** 创建一条可保存的对象数据。id 用于之后编辑、删除和任务关联。 */
@@ -55,9 +56,12 @@ export function createMapObject(type, x, y, name, extra = {}) {
  * 游戏场景都能放心读取 dialogue、battle 等字段。
  */
 export function normalizeMapObject(object) {
+  const requestedScale = object.scale == null || object.scale === "" ? Number.NaN : Number(object.scale);
   const base = {
     ...object,
     name: object.name?.trim() || MAP_OBJECT_TYPES[object.type]?.name || "未命名对象",
+    // 缩放属于地图实例，而不是模板。这样同一种 NPC、怪物或建筑可以在不同位置使用不同尺寸。
+    scale: Number.isFinite(requestedScale) ? Math.min(4, Math.max(0.25, requestedScale)) : 1,
   };
   if (base.type === "npc") {
     return {

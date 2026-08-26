@@ -768,7 +768,7 @@ export class ItemEditorScene extends Phaser.Scene {
       }
     }
     this.isSaving = false;
-    this.showNotice("保存失败：浏览器本地存档空间不足，请清理旧存档后重试");
+    this.showNotice("保存失败：无法写入项目文件夹，请确认本地服务器正在运行");
   }
 
   showNotice(message) {

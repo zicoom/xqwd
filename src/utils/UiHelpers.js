@@ -9,35 +9,57 @@ let cultivationMusic = null;
  * Phaser 的文字样式参数较多，封装后每个场景都能复用，后期换字体/颜色也更方便。
  */
 export function addText(scene, x, y, text, size = 24, color = "#fff7dc", extra = {}) {
-  return scene.add.text(x, y, text, {
+  // origin 是显示对象属性而不是 TextStyle；旧实现把它直接塞进样式对象，
+  // 导致所有声明了 origin: 0.5 的按钮文字实际上仍从左上角开始绘制。
+  const { origin, ...style } = extra;
+  const textObject = scene.add.text(x, y, text, {
     fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
     fontSize: `${size}px`,
     color,
     stroke: "#1c1914",
     strokeThickness: 4,
-    ...extra,
+    ...style,
   });
+  if (Array.isArray(origin)) textObject.setOrigin(origin[0] ?? 0, origin[1] ?? origin[0] ?? 0);
+  else if (origin !== undefined) textObject.setOrigin(origin);
+  return textObject;
 }
 
 /** 播放很短的界面点击声；使用浏览器内置音源，因此不需要额外下载音效文件。 */
 export function playUiClickSound(scene) {
   try {
     const context = scene?.sound?.context || scene?.game?.sound?.context;
-    if (!context) return;
-    if (context.state === "suspended") context.resume?.();
-    const now = context.currentTime;
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(560, now);
-    oscillator.frequency.exponentialRampToValueAtTime(720, now + 0.055);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.075, now + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.09);
+    if (!context || context.state === "closed") return;
+
+    const emitTone = () => {
+      if (context.state !== "running") return;
+      const now = context.currentTime + 0.004;
+      const output = scene?.sound?.destination || scene?.game?.sound?.destination || context.destination;
+      // 恢复项目原本柔和的单一正弦上扬音色；只适度提高音量，避免再次被背景音乐盖住。
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(560, now);
+      oscillator.frequency.exponentialRampToValueAtTime(720, now + 0.055);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.16, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+      oscillator.connect(gain);
+      gain.connect(output);
+      oscillator.start(now);
+      oscillator.stop(now + 0.09);
+    };
+
+    if (context.state === "running") {
+      emitTone();
+      return;
+    }
+
+    // 浏览器在切换全屏、切回标签页或首次进入游戏时可能暂停 AudioContext。
+    // 必须等待恢复完成后再创建短音；旧实现没有等待，导致声音在恢复前就被浏览器吞掉。
+    scene?.sound?.unlock?.();
+    const resumed = context.resume?.();
+    if (resumed?.then) resumed.then(emitTone).catch(() => {});
   } catch (_) {
     // 浏览器禁止声音或设备不支持时，按钮功能仍照常可用。
   }

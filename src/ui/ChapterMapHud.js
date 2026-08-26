@@ -1,7 +1,7 @@
 import { gameState } from "../core/GameState.js";
-import { getPlayerPortrait } from "../core/PortraitCatalog.js";
 import { QINGYUN_INVESTIGATION_ID } from "../domain/quests/ChapterQuestService.js";
 import { addButton, addText, playUiClickSound } from "../utils/UiHelpers.js";
+import { PlayerTopToolbar } from "./PlayerTopToolbar.js";
 
 /**
  * 第一章地图专用 HUD（界面层）。
@@ -20,16 +20,7 @@ export class ChapterMapHud {
 
   /** 刷新资料栏的生命、修为数值和填充长度（供储物袋使用物品后调用）。 */
   refreshPlayerStatus() {
-    const updateBar = (key, value, maxValue, label) => {
-      const ratio = Phaser.Math.Clamp((Number(value) || 0) / Math.max(1, Number(maxValue) || 1), 0, 1);
-      const previousRatio = this.statusRatios?.[key] || 0;
-      const fill = this.statusBarFills?.[key];
-      if (fill && previousRatio > 0) fill.setScale(ratio / previousRatio, 1);
-      this.statusRatios[key] = ratio;
-      this[label]?.setText(`${value}/${maxValue}`);
-    };
-    updateBar("hp", gameState.player.hp, gameState.player.maxHp, "hpValueText");
-    updateBar("qi", gameState.player.qi, gameState.player.maxQi, "qiValueText");
+    this.playerTopToolbar?.refreshPlayerStatus();
   }
 
   /** 创建第一章地图的所有固定界面。 */
@@ -40,157 +31,17 @@ export class ChapterMapHud {
     const panelColor = 0x171d16;
     const panelStroke = 0x765b43;
 
-    // ── 左上：角色资料栏 ───────────────────────────────────────────────
-    // 层级从下到上固定为：米色圆底 → 115×115 头像 → s1 黑色笔触底板 → 文字与血条。
-    // 这样头像与圆底完全同尺寸、同位置，笔触不会遮挡文字。
-    const avatarCenterX = 94;
-    const avatarCenterY = 87;
-    const avatarSize = 115;
-    fixed(scene.add.circle(avatarCenterX - 12, avatarCenterY - 2, avatarSize / 2, 0xd1c5af));
-    // 头像由创建角色时选择的完整立绘裁出面部与肩部，再用圆形蒙版收口；
-    // 因此玩家只维护一张立绘，也能得到效果图中的圆形地图头像。
-    const playerAvatarTexture = this.createPlayerAvatarTexture();
-    const playerAvatar = fixed(scene.add.image(avatarCenterX - 12, avatarCenterY - 2, playerAvatarTexture)
-      .setOrigin(0.5, 0.5)
-      .setDisplaySize(avatarSize, avatarSize));
-    const avatarMaskGraphic = fixed(scene.add.graphics());
-    avatarMaskGraphic.fillStyle(0xffffff, 1);
-    avatarMaskGraphic.fillCircle(avatarCenterX - 12, avatarCenterY - 2, avatarSize / 2);
-    playerAvatar.setMask(avatarMaskGraphic.createGeometryMask());
-    // 蒙版图形只用于裁切，不能作为实心圆盖在头像上方。
-    avatarMaskGraphic.setVisible(false);
-    fixed(scene.add.image(18, 20, "chapter-hud-profile-brush")
-      .setOrigin(0, 0)
-      // 保持水墨底板原始 442×133 尺寸，绝不拉伸。
-      .setDisplaySize(442, 133));
-    // 在原图尺寸范围内排版：标签 → 数值条 → 数值居中。
-    const playerNameText = fixed(addText(scene, 145, 44, gameState.player.name, 20, "#ffffff", { strokeThickness: 4 }));
-    // 角色名可由玩家自由填写，境界文字从名字实际宽度之后开始，绝不会挤在一起。
-    fixed(addText(scene, playerNameText.x + playerNameText.width + 6, 49, gameState.player.realm.replace("炼气", "炼气·"), 16, "#d8caae", { strokeThickness: 3 }));
-    fixed(addText(scene, 145, 79, "生命:", 16, "#f4ead8", { strokeThickness: 3 }));
-    // 这四个数是两条血条的统一尺寸和位置；继续微调时只改这里即可。
-    const barX = 195;
-    const barWidth = 223;
-    const barHeight = 22;
-    const barRadius = barHeight / 2;
-    this.statusBarFills = {};
-    this.statusRatios = {};
-    const drawRoundedBar = (barY, ratio, fillStartColor, fillEndColor, borderColor) => {
-      const background = fixed(scene.add.graphics());
-      background.fillStyle(0x101010, 0.98);
-      background.fillRoundedRect(barX, barY - barHeight / 2, barWidth, barHeight, barRadius);
-      background.lineStyle(1, borderColor, 1);
-      background.strokeRoundedRect(barX, barY - barHeight / 2, barWidth, barHeight, barRadius);
-
-      const fillWidth = barWidth * Phaser.Math.Clamp(ratio, 0, 1);
-      if (fillWidth <= 0) return null;
-
-      // Graphics 的渐变圆角在 WebGL 中会用三角形拼接，部分显卡上能看见斜线。
-      // 改由浏览器画布生成单张渐变纹理，渐变连续且没有任何三角形痕迹。
-      const textureKey = `chapter-hud-bar-gradient-${barY}`;
-      if (scene.textures.exists(textureKey)) scene.textures.remove(textureKey);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(2, Math.round(fillWidth - 4));
-      canvas.height = barHeight - 4;
-      const context = canvas.getContext("2d");
-      const gradient = context.createLinearGradient(0, 0, canvas.width, 0);
-      const colorToCss = (color) => `#${color.toString(16).padStart(6, "0")}`;
-      gradient.addColorStop(0, colorToCss(fillStartColor));
-      gradient.addColorStop(1, colorToCss(fillEndColor));
-      context.fillStyle = gradient;
-      const radius = canvas.height / 2;
-      context.beginPath();
-      context.moveTo(radius, 0);
-      context.lineTo(canvas.width - radius, 0);
-      context.quadraticCurveTo(canvas.width, 0, canvas.width, radius);
-      context.lineTo(canvas.width, canvas.height - radius);
-      context.quadraticCurveTo(canvas.width, canvas.height, canvas.width - radius, canvas.height);
-      context.lineTo(radius, canvas.height);
-      context.quadraticCurveTo(0, canvas.height, 0, canvas.height - radius);
-      context.lineTo(0, radius);
-      context.quadraticCurveTo(0, 0, radius, 0);
-      context.closePath();
-      context.fill();
-      scene.textures.addCanvas(textureKey, canvas);
-      return fixed(scene.add.image(barX + 2, barY, textureKey).setOrigin(0, 0.5));
-    };
-
-    const hpBarY = 92;
-    const hpRatio = gameState.player.hp / gameState.player.maxHp;
-    this.statusBarFills.hp = drawRoundedBar(hpBarY, hpRatio, 0xb71c08, 0xf45235, 0x613a30);
-    this.statusRatios.hp = hpRatio;
-    // origin: 0.5 让文字以自身中心点对齐；y 与血条中心相同就是垂直居中。
-    // setOrigin(0.5) 必须直接作用在文字对象上，才能让数值横向、纵向都以血条中心对齐。
-    // 深度 910 高于圆角底框与颜色填充（900），确保数字永远不会被血条盖住。
-    this.hpValueText = fixed(addText(scene, barX + barWidth / 2, hpBarY, `${gameState.player.hp}/${gameState.player.maxHp}`, 16, "#ffffff", { strokeThickness: 3 }))
-      .setOrigin(0.5)
-      .setDepth(910);
-    fixed(addText(scene, 145, 105, "修为:", 16, "#f4ead8", { strokeThickness: 3 }));
-    const qiBarY = 117;
-    const qiRatio = gameState.player.qi / gameState.player.maxQi;
-    this.statusBarFills.qi = drawRoundedBar(qiBarY, qiRatio, 0x164f83, 0x4aa9ef, 0x343439);
-    this.statusRatios.qi = qiRatio;
-    this.qiValueText = fixed(addText(scene, barX + barWidth / 2, qiBarY, `${gameState.player.qi}/${gameState.player.maxQi}`, 16, "#ffffff", { strokeThickness: 3 }))
-      .setOrigin(0.5)
-      .setDepth(910);
-
-    // ── 顶部：六个功能入口 ────────────────────────────────────────────
-    // 每个图标都是独立 PNG，不使用整张截图，因此保留点击功能并方便以后替换。
-    const entries = [
-      ["pixso-ui-store", "储物袋", () => scene.openStorageBag()],
-      ["pixso-ui-spell", "法术", () => scene.openSpellPanel()],
-      // 功法、法术、法宝都是角色菜单的独立子页，顶部入口只指定默认页签。
-      ["pixso-ui-gongfa", "功法", () => scene.openTechniqueBag()],
-      ["pixso-ui-artifact", "法宝", () => scene.openArtifactBag()],
-      ["pixso-ui-save", "存档", () => scene.openSavePanel()],
-      ["pixso-ui-settings", "设置", () => scene.openGameSettings()],
-    ];
-    const iconXs = [537, 690, 849, 1002, 1158, 1313];
-    entries.forEach(([textureKey, label, action], index) => {
-      const x = iconXs[index];
-      fixed(scene.add.image(x, 77, "pixso-ui-brush").setDisplaySize(111, 111));
-      const icon = fixed(scene.add.image(x, 77, textureKey).setDisplaySize(100, 100).setInteractive({ useHandCursor: true }));
-      const normalScaleX = icon.scaleX;
-      const normalScaleY = icon.scaleY;
-      // addText 的样式参数不会自动改变文字锚点；这里明确设为 0.5，
-      // 让“储物袋、法术、功法……”始终以图标 x 坐标为正中心。
-      fixed(addText(scene, x, 138, label, 23, "#fff6dd", { strokeThickness: 5 }))
-        .setOrigin(0.5);
-      icon.on("pointerdown", (_pointer, _localX, _localY, event) => {
-        // 角色菜单覆盖在地图 HUD 上时，底层图标仍可能收到同一次鼠标事件。
-        // 忽略该事件，避免它重新打开菜单并重置淡入动画，从而闪出地图。
-        if (scene.characterMenu?.visible) return;
-        // Phaser 会在游戏对象的 pointerdown 之后继续派发场景级 pointerdown。
-        // “存档”外层图标的 x 坐标恰好落在角色菜单“功法”页签范围内：若不停止
-        // 传播，同一次点击会先打开存档页，又立即被场景级输入切换成功法页。
-        // 这里只拦截负责“首次打开角色菜单”的那一次事件；菜单已经打开时仍由
-        // CharacterMenuPanel 正常接收后续点击，因此不会影响页签切换。
-        event?.stopPropagation();
-        action();
-      });
-      // 只保留放大效果，不改变位置；缓动让放大、缩回都更柔和。
-      // 每次进入或离开前先停止旧动画，快速移动鼠标时也不会连续跳动。
-      icon.on("pointerover", () => {
-        scene.tweens.killTweensOf(icon);
-        scene.tweens.add({
-          targets: icon,
-          scaleX: normalScaleX * 1.08,
-          scaleY: normalScaleY * 1.08,
-          duration: 180,
-          ease: "Sine.easeOut",
-        });
-      });
-      icon.on("pointerout", () => {
-        scene.tweens.killTweensOf(icon);
-        scene.tweens.add({
-          targets: icon,
-          scaleX: normalScaleX,
-          scaleY: normalScaleY,
-          duration: 180,
-          ease: "Sine.easeInOut",
-        });
-      });
-    });
+    // 大地图与门派内部共用同一套角色状态栏和功能图标，避免两个场景各自维护后逐渐走样。
+    this.playerTopToolbar = new PlayerTopToolbar(scene, {
+      actions: {
+        storage: () => scene.openStorageBag(),
+        spells: () => scene.openSpellPanel(),
+        techniques: () => scene.openTechniqueBag(),
+        artifacts: () => scene.openArtifactBag(),
+        save: () => scene.openSavePanel(),
+        settings: () => scene.openGameSettings(),
+      },
+    }).create();
 
     // ── 右侧：水墨卷轴信息栏（日期、任务、小地图） ────────────────────
     // 这一列不再使用普通的黑色圆角卡片，而是统一做成“墨色宣纸卷轴”：
@@ -735,32 +586,6 @@ export class ChapterMapHud {
     this.taskLogReward.setText(quest.rewardLabel);
     this.taskLogIssuerName.setText(quest.issuer);
     this.taskLogRecipientName.setText(quest.recipient);
-  }
-
-  /**
-   * 从完整立绘中截取上半身，生成地图 HUD 专用的方形纹理。
-   * 每个角色仍只存一个 portraitId；本方法只负责显示层的裁切，不写入任何存档数据。
-   */
-  createPlayerAvatarTexture() {
-    const scene = this.scene;
-    const selectedPortrait = getPlayerPortrait(gameState.player.portraitId);
-    const sourceTexture = scene.textures.exists(selectedPortrait.textureKey)
-      ? scene.textures.get(selectedPortrait.textureKey)
-      : scene.textures.get("chapter-hud-profile-avatar");
-    const source = sourceTexture.getSourceImage();
-    const key = "chapter-hud-player-avatar-cropped";
-    if (scene.textures.exists(key)) scene.textures.remove(key);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = 192;
-    canvas.height = 192;
-    const context = canvas.getContext("2d");
-    const cropSize = Math.min(source.width * 0.82, source.height * 0.72);
-    const cropX = Math.max(0, (source.width - cropSize) / 2);
-    const cropY = Math.max(0, source.height * 0.04);
-    context.drawImage(source, cropX, cropY, cropSize, cropSize, 0, 0, canvas.width, canvas.height);
-    scene.textures.addCanvas(key, canvas);
-    return key;
   }
 
   abandonCurrentQuest() {

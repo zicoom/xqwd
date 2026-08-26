@@ -3,6 +3,7 @@ import { MAP_DEFINITIONS, getMapDefinition } from "../core/MapCatalog.js";
 import { getMonsterTemplates } from "../core/MonsterStore.js";
 import { getBuildingTemplates, getNpcTemplates } from "../core/WorldTemplateStore.js";
 import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
+import { getBuildingAppearanceTextureKey, resolveBuildingAppearance } from "../core/BuildingAppearance.js";
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
 import { addText } from "../utils/UiHelpers.js";
@@ -11,6 +12,11 @@ const CATEGORIES = [
   ["building", "建筑"], ["npc", "NPC"], ["monster", "怪物"], ["herb", "灵草"],
   ["mineral", "矿石"], ["portal", "传送"], ["trigger", "触发"],
 ];
+
+const SIDEBAR_WIDTH = 348;
+const MAP_VIEW_WIDTH = 1920 - SIDEBAR_WIDTH;
+const TEMPLATE_CARD_HEIGHT = 88;
+const VISIBLE_TEMPLATE_COUNT = 5;
 
 /** 左侧素材库 + 中央地图画布 + 多地图切换 + 全局视图的可视化编辑器。 */
 export class MapEditorScene extends Phaser.Scene {
@@ -40,15 +46,17 @@ export class MapEditorScene extends Phaser.Scene {
     this.npcs = getNpcTemplates();
     this.buildings = getBuildingTemplates();
     this.selectedTemplateIds = {
-      monster: this.monsters[0]?.id || null,
-      npc: this.npcs[0]?.id || null,
-      building: this.buildings[0]?.id || null,
+      monster: null,
+      npc: null,
+      building: null,
+      portal: null,
     };
     this.selectedCategory = "monster";
+    this.templateListStart = 0;
     this.selectedObjectId = null;
     this.streamElapsed = 0;
 
-    this.mapCamera = this.cameras.main.setViewport(282, 0, 1638, 1080).setBackgroundColor("#223a38");
+    this.mapCamera = this.cameras.main.setViewport(SIDEBAR_WIDTH, 0, MAP_VIEW_WIDTH, 1080).setBackgroundColor("#223a38");
     this.uiCamera = this.cameras.add(0, 0, 1920, 1080).setScroll(0, 0).setZoom(1);
     this.loadMap(this.activeMapId, false);
     this.buildUi();
@@ -57,8 +65,8 @@ export class MapEditorScene extends Phaser.Scene {
     this.keys = this.input.keyboard.addKeys("W,A,S,D,DELETE,ESC");
     this.input.on("pointerdown", (pointer) => this.pointerDown(pointer));
     this.input.on("pointermove", (pointer) => this.pointerMove(pointer));
-    this.input.on("pointerup", () => { this.panning = false; });
-    this.input.on("wheel", (pointer, _objects, _dx, deltaY) => this.zoomAt(pointer, deltaY));
+    this.input.on("pointerup", () => this.endPointerAction());
+    this.input.on("wheel", (pointer, _objects, _dx, deltaY) => this.handleWheel(pointer, deltaY));
     this.keys.DELETE.on("down", () => this.deleteSelected());
     this.keys.ESC.on("down", () => this.cancelSelection());
     this.input.keyboard.on("keydown-Z", (event) => { if (event.ctrlKey) this.undo(); });
@@ -66,13 +74,17 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   clone(value) { return JSON.parse(JSON.stringify(value)); }
+  clearPendingTemplateSelection() {
+    Object.keys(this.selectedTemplateIds || {}).forEach((type) => { this.selectedTemplateIds[type] = null; });
+  }
   tileKey(mapId, x, y) { return `editor-${mapId}-tile-x${x}-y${y}`; }
   tilePath(x, y) { return `./public/assets/images/maps/qingyun-mountain/tiles/tile-x${y}-y${x}.webp`; }
-  fitZoom() { return Math.min(1638 / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
-  coverZoom() { return Math.max(1638 / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
+  fitZoom() { return Math.min(MAP_VIEW_WIDTH / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
+  coverZoom() { return Math.max(MAP_VIEW_WIDTH / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
 
   loadMap(mapId, remember = true) {
     if (remember && this.mapObjects) this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+    if (remember) this.clearPendingTemplateSelection();
     this.clearWorld();
     this.activeMapId = mapId;
     this.mapConfig = getMapDefinition(mapId);
@@ -146,8 +158,8 @@ export class MapEditorScene extends Phaser.Scene {
     object.setDepth(depth); this.mapCamera.ignore(object); this.uiObjects.push(object); return object;
   }
 
-  text(x, y, value, size = 14, color = "#eee1c9") {
-    return this.pin(addText(this, x, y, value, size, color, { strokeThickness: 1 }), 102);
+  text(x, y, value, size = 14, color = "#eee1c9", style = {}) {
+    return this.pin(addText(this, x, y, value, size, color, { strokeThickness: 1, ...style }), 102);
   }
 
   button(x, y, width, height, label, action, options = {}) {
@@ -163,30 +175,36 @@ export class MapEditorScene extends Phaser.Scene {
 
   buildUi() {
     this.uiObjects.forEach((object) => object.destroy()); this.uiObjects = [];
-    this.pin(this.add.rectangle(141, 540, 282, 1080, 0x20150f, 0.98).setStrokeStyle(2, 0x6f4a29), 100);
-    this.text(141, 26, "地图编辑器", 24, "#f1c853").setOrigin(0.5);
-    this.text(141, 55, `${this.mapConfig.name} · 创造模式`, 13, "#bda681").setOrigin(0.5);
+    this.pin(this.add.rectangle(SIDEBAR_WIDTH / 2, 540, SIDEBAR_WIDTH, 1080, 0x20150f, 0.98).setStrokeStyle(2, 0x6f4a29), 100);
+    this.text(SIDEBAR_WIDTH / 2, 27, "地图编辑器", 25, "#f1c853").setOrigin(0.5);
+    this.text(SIDEBAR_WIDTH / 2, 56, `${this.mapConfig.name} · 创造模式`, 13, "#bda681").setOrigin(0.5);
     CATEGORIES.forEach(([key, label], index) => {
       const active = key === this.selectedCategory;
-      const x = 7 + index * 39;
-      this.button(x, 72, 36, 39, label[0], () => this.selectCategory(key), { fill: active ? 0x60401e : 0x201712, stroke: active ? 0xd3a348 : 0x3e3027, size: 13 });
-      this.text(x + 18, 119, label, 10, active ? "#f3cd55" : "#b4a99d").setOrigin(0.5);
+      const secondRow = index >= 4;
+      const x = 14 + (secondRow ? index - 4 : index) * 82;
+      const y = secondRow ? 121 : 82;
+      this.button(x, y, 74, 31, label, () => this.selectCategory(key), {
+        fill: active ? 0x8f6829 : 0x39302a,
+        stroke: active ? 0xf0c85c : 0x655246,
+        color: active ? "#fff0c7" : "#d8c7ad",
+        size: 14,
+      });
     });
-    this.text(10, 144, `选择${this.categoryName()}模板：`, 14, "#d9c6a9");
-    this.buildTemplateGrid();
+    this.text(14, 166, `选择${this.categoryName()}模板：`, 15, "#d9c6a9");
+    this.buildTemplateList();
     this.buildStats();
-    this.button(8, 828, 128, 34, "↶ 撤销", () => this.undo(), { fill: 0x28313a });
-    this.button(146, 828, 128, 34, "↷ 重做", () => this.redo(), { fill: 0x28313a });
-    this.button(8, 872, 128, 34, "删除", () => this.deleteSelected(), { fill: 0x48282a });
-    this.button(146, 872, 128, 34, "取消选择", () => this.cancelSelection(), { fill: 0x332d2b });
-    this.button(8, 916, 128, 36, "保存到游戏", () => this.save(), { fill: 0x365d39 });
-    this.button(146, 916, 128, 36, "导出配置", () => this.exportConfig(), { fill: 0x4c4033 });
-    this.button(8, 960, 266, 36, "全局视图", () => this.focusWholeMap(), { fill: 0x3b3027 });
-    this.button(8, 1005, 266, 44, "返回开发者控制台", () => this.scene.start(SceneKeys.DEVELOPER_CONSOLE), { fill: 0x49351f });
+    this.button(14, 786, 154, 34, "↶ 撤销", () => this.undo(), { fill: 0x28313a });
+    this.button(180, 786, 154, 34, "↷ 重做", () => this.redo(), { fill: 0x28313a });
+    this.button(14, 830, 154, 34, "删除", () => this.deleteSelected(), { fill: 0x48282a });
+    this.button(180, 830, 154, 34, "取消选择", () => this.cancelSelection(), { fill: 0x332d2b });
+    this.button(14, 874, 154, 36, "保存到游戏", () => this.save(), { fill: 0x365d39 });
+    this.button(180, 874, 154, 36, "导出配置", () => this.exportConfig(), { fill: 0x4c4033 });
+    this.button(14, 920, 320, 36, "全局视图", () => this.focusWholeMap(), { fill: 0x3b3027 });
+    this.button(14, 966, 320, 42, "返回开发者控制台", () => this.scene.start(SceneKeys.DEVELOPER_CONSOLE), { fill: 0x49351f });
 
     MAP_DEFINITIONS.forEach((map, index) => {
       const active = map.id === this.activeMapId;
-      this.button(300 + index * 100, 1028, 92, 42, map.name, () => this.loadMap(map.id), {
+      this.button(SIDEBAR_WIDTH + 18 + index * 100, 1028, 92, 42, map.name, () => this.loadMap(map.id), {
         fill: active ? 0x88651e : 0x26302d, stroke: active ? 0xf0c34f : 0x50615b, size: 16,
       });
     });
@@ -196,7 +214,8 @@ export class MapEditorScene extends Phaser.Scene {
   categoryName() { return CATEGORIES.find(([key]) => key === this.selectedCategory)?.[1] || "对象"; }
 
   selectCategory(category) {
-    this.selectedCategory = category; this.selectedObjectId = null; this.buildUi();
+    this.clearPendingTemplateSelection();
+    this.selectedCategory = category; this.selectedObjectId = null; this.templateListStart = 0; this.buildUi();
     if (["herb", "mineral", "trigger"].includes(category)) this.notice(`${this.categoryName()}模板入口已预留，等待对应内容编辑器。`, "#ffd08a");
   }
 
@@ -208,24 +227,117 @@ export class MapEditorScene extends Phaser.Scene {
     return [];
   }
 
-  buildTemplateGrid() {
-    const templates = this.templatesForCategory().slice(0, 12);
-    templates.forEach((template, index) => {
-      const x = 8 + (index % 3) * 91;
-      const y = 166 + Math.floor(index / 3) * 82;
-      const active = this.selectedTemplateIds[this.selectedCategory] === template.id;
-      this.button(x, y, 83, 72, template.name, () => {
-        this.selectedTemplateIds[this.selectedCategory] = template.id; this.selectedObjectId = null; this.buildUi();
-      }, { fill: active ? 0x4f3c25 : 0x292321, stroke: active ? 0xe4bb57 : 0x514942, size: 12 });
+  buildTemplateList() {
+    const templates = this.templatesForCategory();
+    const maxStart = Math.max(0, templates.length - VISIBLE_TEMPLATE_COUNT);
+    this.templateListStart = Phaser.Math.Clamp(this.templateListStart || 0, 0, maxStart);
+    templates.slice(this.templateListStart, this.templateListStart + VISIBLE_TEMPLATE_COUNT)
+      .forEach((template, index) => this.drawTemplateCard(template, index));
+    if (!templates.length) this.text(22, 216, "当前分类暂无模板", 15, "#988d82");
+    if (templates.length > VISIBLE_TEMPLATE_COUNT) {
+      const up = this.text(320, 174, "▲", 13, "#d2b379", { strokeThickness: 0 }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      const down = this.text(320, 688, "▼", 13, "#d2b379", { strokeThickness: 0 }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      up.on("pointerdown", () => this.scrollTemplateList(-1));
+      down.on("pointerdown", () => this.scrollTemplateList(1));
+    }
+  }
+
+  drawTemplateCard(template, index) {
+    const y = 190 + index * 98;
+    const active = this.selectedTemplateIds[this.selectedCategory] === template.id;
+    const card = this.pin(this.add.rectangle(174, y + TEMPLATE_CARD_HEIGHT / 2, 320, TEMPLATE_CARD_HEIGHT, active ? 0x4a311b : 0x292827)
+      .setStrokeStyle(2, active ? 0xd8ad58 : 0x3f3c38).setInteractive({ useHandCursor: true }), 101);
+    this.pin(this.add.rectangle(62, y + TEMPLATE_CARD_HEIGHT / 2, 72, 72, 0x1d1d1c)
+      .setStrokeStyle(2, active ? 0xd8ad58 : 0x65503a), 102);
+    this.drawTemplatePreview(template, 62, y + TEMPLATE_CARD_HEIGHT / 2, 66);
+    this.text(112, y + 18, String(template.name || "未命名模板").slice(0, 13), 19, "#f2ce4a", { strokeThickness: 1 });
+    this.text(112, y + 51, this.templateSummary(template), 13, active ? "#7dd9af" : "#bdb2a5", { strokeThickness: 0 });
+    card.on("pointerdown", () => {
+      // 模板只进入一次性放置状态；再次点击高亮卡片可以主动取消。
+      this.selectedTemplateIds[this.selectedCategory] = active ? null : template.id;
+      this.selectedObjectId = null;
+      this.buildUi();
     });
-    if (!templates.length) this.text(18, 190, "当前分类暂无模板", 14, "#988d82");
+  }
+
+  templateSummary(template) {
+    if (this.selectedCategory === "monster") return `${template.grade || "普通"} · ${template.realm || "未知境界"} · ${template.element || "无"}`;
+    if (this.selectedCategory === "npc") return `${template.profile?.realm || "未知境界"} · ${template.profile?.identity || "NPC"}`;
+    if (this.selectedCategory === "building") return `${template.type || "建筑"} · ${template.display?.width || 256}×${template.display?.height || 256}`;
+    if (this.selectedCategory === "portal") return "地图传送点";
+    return this.categoryName();
+  }
+
+  templateImageData(template) {
+    if (this.selectedCategory === "monster") return resolveMonsterAppearance(template).staticImageData;
+    if (this.selectedCategory === "npc") return template.portraitData || template.imageData || template.avatarData || "";
+    if (this.selectedCategory === "building") return template.imageData || "";
+    return "";
+  }
+
+  templateTextureKey(template, data, category = this.selectedCategory) {
+    if (category === "monster") return getMonsterAppearanceTextureKey(template, "map-editor-card-monster");
+    if (category === "building") return getBuildingAppearanceTextureKey(template, "map-editor-card-building");
+    let hash = 2166136261;
+    const step = Math.max(1, Math.floor(data.length / 128));
+    for (let index = 0; index < data.length; index += step) {
+      hash ^= data.charCodeAt(index); hash = Math.imul(hash, 16777619);
+    }
+    return `map-editor-card-${category}-${template.id}-${(hash >>> 0).toString(36)}`;
+  }
+
+  drawTemplatePreview(template, x, y, maxSize) {
+    const data = this.templateImageData(template);
+    let fallback = null; let frame;
+    if (this.selectedCategory === "monster") fallback = "editor-monster-preview";
+    if (this.selectedCategory === "npc") { fallback = "editor-npc-preview"; frame = 0; }
+    const key = data ? this.templateTextureKey(template, data) : fallback;
+    if (!key || (!data && !this.textures.exists(key))) {
+      this.text(x, y, this.categoryName()[0], 25, "#d8c49a", { strokeThickness: 0 }).setOrigin(0.5);
+      return;
+    }
+    const preview = this.pin(this.add.image(x, y, this.textures.exists(key) ? key : fallback, frame), 103);
+    const fit = () => {
+      if (!preview.active) return;
+      const source = preview.frame;
+      const scale = Math.min(maxSize / source.width, maxSize / source.height);
+      preview.setDisplaySize(source.width * scale, source.height * scale);
+    };
+    fit();
+    if (!data || this.textures.exists(key)) return;
+    const image = new Image();
+    image.onload = () => {
+      if (!this.textures.exists(key)) this.textures.addImage(key, image);
+      if (!preview.active) return;
+      preview.setTexture(key); fit();
+    };
+    image.src = data;
+  }
+
+  scrollTemplateList(direction) {
+    const maxStart = Math.max(0, this.templatesForCategory().length - VISIBLE_TEMPLATE_COUNT);
+    const next = Phaser.Math.Clamp((this.templateListStart || 0) + direction, 0, maxStart);
+    if (next === this.templateListStart) return;
+    this.templateListStart = next; this.buildUi();
   }
 
   buildStats() {
     const counts = Object.keys(MAP_OBJECT_TYPES).map((type) => `${MAP_OBJECT_TYPES[type].name}${this.mapObjects.filter((item) => item.type === type).length}`);
-    this.text(8, 758, counts.join("｜"), 12, "#aaa194");
+    this.text(14, 704, counts.join("｜"), 12, "#aaa194", { wordWrap: { width: 320 } });
     const selected = this.mapObjects.find((object) => object.id === this.selectedObjectId);
-    this.text(8, 784, selected ? `已选：${selected.name} (${selected.x}, ${selected.y})` : `对象 ${this.mapObjects.length}｜未选择对象`, 13, selected ? "#f3cf74" : "#aaa194");
+    const templateId = this.selectedTemplateIds[this.selectedCategory];
+    const template = this.templatesForCategory().find((item) => item.id === templateId);
+    const status = selected
+      ? `已选：${String(selected.name).slice(0, 12)} (${selected.x}, ${selected.y})`
+      : (template ? `待放置：${String(template.name).slice(0, 15)}` : "未选择模板，点击上方卡片后再放置");
+    this.text(14, 728, status, 13, selected || template ? "#f3cf74" : "#d7a777", { wordWrap: { width: 320 } });
+    if (selected) {
+      this.button(14, 748, 96, 30, "－ 缩小", () => this.scaleSelected(-0.25), { fill: 0x30383b, size: 13 });
+      this.button(116, 748, 116, 30, `${Math.round((selected.scale || 1) * 100)}%`, () => this.resetSelectedScale(), { fill: 0x4a3b29, size: 13 });
+      this.button(238, 748, 96, 30, "＋ 放大", () => this.scaleSelected(0.25), { fill: 0x30383b, size: 13 });
+    } else {
+      this.text(14, 758, "选中地图对象后可单独缩放", 12, "#8f877d");
+    }
   }
 
   buildMiniMap() {
@@ -249,8 +361,12 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   pushHistory() {
+    this.pushHistorySnapshot(this.mapObjects);
+  }
+
+  pushHistorySnapshot(snapshot) {
     const history = this.historyByMap.get(this.activeMapId) || [];
-    history.push(this.clone(this.mapObjects)); if (history.length > 40) history.shift();
+    history.push(this.clone(snapshot)); if (history.length > 40) history.shift();
     this.historyByMap.set(this.activeMapId, history); this.redoByMap.set(this.activeMapId, []);
   }
 
@@ -259,7 +375,7 @@ export class MapEditorScene extends Phaser.Scene {
     if (!history.length) return this.notice("没有可撤销的操作。", "#d7c8a8");
     const redo = this.redoByMap.get(this.activeMapId) || [];
     redo.push(this.clone(this.mapObjects)); this.redoByMap.set(this.activeMapId, redo);
-    this.mapObjects = history.pop(); this.selectedObjectId = null; this.renderMarkers(); this.buildUi();
+    this.mapObjects = history.pop(); this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
   }
 
   redo() {
@@ -267,12 +383,12 @@ export class MapEditorScene extends Phaser.Scene {
     if (!redo.length) return this.notice("没有可重做的操作。", "#d7c8a8");
     const history = this.historyByMap.get(this.activeMapId) || [];
     history.push(this.clone(this.mapObjects)); this.historyByMap.set(this.activeMapId, history);
-    this.mapObjects = redo.pop(); this.selectedObjectId = null; this.renderMarkers(); this.buildUi();
+    this.mapObjects = redo.pop(); this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
   }
 
   pointerDown(pointer) {
     // 左侧素材库和底部地图标签属于固定 UI，不能穿透到地图放置对象。
-    if (pointer.x < 282 || pointer.y >= 1018) return;
+    if (pointer.x < SIDEBAR_WIDTH || pointer.y >= 1018) return;
     if (pointer.button === 1 || pointer.middleButtonDown()) {
       this.panning = true;
       this.panStart = { x: pointer.x, y: pointer.y, scrollX: this.mapCamera.scrollX, scrollY: this.mapCamera.scrollY };
@@ -280,43 +396,69 @@ export class MapEditorScene extends Phaser.Scene {
     }
     if (pointer.x > 1545 && pointer.y > 790) return;
     const world = this.mapCamera.getWorldPoint(pointer.x, pointer.y);
+    const objectIndex = this.objectAt(world.x, world.y);
+    if (objectIndex >= 0) {
+      const object = this.mapObjects[objectIndex];
+      // 一旦开始选择或拖动已有对象，就立即退出模板放置状态，防止松手后误点空白又复制一份。
+      this.clearPendingTemplateSelection();
+      this.selectedObjectId = object.id;
+      this.draggingObjectId = object.id;
+      this.dragStartSnapshot = this.clone(this.mapObjects);
+      this.dragStartPosition = { x: object.x, y: object.y };
+      this.dragOffset = { x: object.x - world.x, y: object.y - world.y };
+      this.dragHasMoved = false;
+      this.renderMarkers(); this.buildUi();
+      return;
+    }
     this.mapClick(world.x, world.y);
   }
 
   mapClick(x, y) {
-    const nearest = this.nearestObject(x, y);
-    if (nearest >= 0 && Phaser.Math.Distance.Between(x, y, this.mapObjects[nearest].x, this.mapObjects[nearest].y) < 55) {
-      this.selectedObjectId = this.mapObjects[nearest].id; this.renderMarkers(); this.buildUi(); return;
-    }
     if (["herb", "mineral", "trigger"].includes(this.selectedCategory)) return;
     const type = this.selectedCategory;
     if (!MAP_OBJECT_TYPES[type]) return;
+    const templateId = this.selectedTemplateIds[type];
+    const template = this.templatesForCategory().find((item) => item.id === templateId);
+    if (!template) {
+      // 已放置对象保持选中时，点击地图空白只负责取消选择，不会再次创建对象。
+      if (this.selectedObjectId) return this.cancelSelection();
+      return this.notice(`请先选择${this.categoryName()}模板。`, "#ffd08a");
+    }
     let name = MAP_OBJECT_TYPES[type].name; let extra = {};
     if (type === "monster") {
-      const template = this.monsters.find((item) => item.id === this.selectedTemplateIds.monster);
-      if (!template) return this.notice("请先选择怪物模板。", "#ffd08a");
       name = template.name; extra = { monsterTemplateId: template.id };
     } else if (type === "npc") {
-      const template = this.npcs.find((item) => item.id === this.selectedTemplateIds.npc);
-      if (!template) return this.notice("请先选择 NPC 模板。", "#ffd08a");
       name = template.name; extra = { npcTemplateId: template.id };
     } else if (type === "building") {
-      const template = this.buildings.find((item) => item.id === this.selectedTemplateIds.building);
-      if (!template) return this.notice("请先选择建筑模板。", "#ffd08a");
       name = template.name; extra = { buildingTemplateId: template.id };
+    } else if (type === "portal") {
+      name = template.name; extra = { portalTemplateId: template.id };
     }
     this.pushHistory();
     const object = createMapObject(type, x, y, name, extra);
-    this.mapObjects.push(object); this.selectedObjectId = object.id; this.renderMarkers(); this.buildUi();
+    this.mapObjects.push(object);
+    this.selectedObjectId = object.id;
+    this.clearPendingTemplateSelection();
+    this.renderMarkers(); this.buildUi();
+    this.notice(`已放置「${object.name}」，并自动退出放置模式。`, "#dff0c7");
   }
 
-  nearestObject(x, y) {
-    let index = -1; let distance = 70;
-    this.mapObjects.forEach((object, objectIndex) => {
-      const next = Phaser.Math.Distance.Between(x, y, object.x, object.y);
-      if (next < distance) { distance = next; index = objectIndex; }
-    });
-    return index;
+  objectAt(x, y) {
+    // 后放置的对象视觉层级更靠前，命中时也应优先选择它。
+    for (let index = this.mapObjects.length - 1; index >= 0; index -= 1) {
+      const object = this.mapObjects[index];
+      const instanceScale = Number(object.scale) || 1;
+      if (object.type === "building") {
+        const template = this.buildings.find((item) => item.id === object.buildingTemplateId);
+        const appearance = resolveBuildingAppearance(template);
+        const width = appearance.width * instanceScale;
+        const height = appearance.height * instanceScale;
+        const left = object.x - width / 2;
+        const top = appearance.anchor === "center" ? object.y - height / 2 : object.y - height;
+        if (x >= left && x <= left + width && y >= top && y <= top + height) return index;
+      } else if (Phaser.Math.Distance.Between(x, y, object.x, object.y) < Math.max(28, 70 * instanceScale)) return index;
+    }
+    return -1;
   }
 
   renderMarkers() {
@@ -326,28 +468,54 @@ export class MapEditorScene extends Phaser.Scene {
 
   renderMarker(object) {
     const info = MAP_OBJECT_TYPES[object.type] || MAP_OBJECT_TYPES.npc;
-    const marker = this.add.container(object.x, object.y).setDepth(8);
+    const instanceScale = Number(object.scale) || 1;
+    const marker = this.add.container(object.x, object.y).setDepth(8 + object.y / 100000);
     const selected = object.id === this.selectedObjectId;
-    const ring = this.add.circle(0, -5, 48, 0xffdc55, selected ? 0.16 : 0).setStrokeStyle(selected ? 3 : 0, 0xffd54d);
-    const shadow = this.add.ellipse(0, 5, 48, 13, 0x17221e, 0.35);
-    let preview;
-    if (object.type === "npc") preview = this.add.image(0, 0, "editor-npc-preview", 0).setOrigin(0.5, 0.86).setScale(0.3);
+    const ring = this.add.circle(0, -5 * instanceScale, 48, 0xffdc55, selected ? 0.16 : 0).setStrokeStyle(selected ? 3 : 0, 0xffd54d).setScale(instanceScale);
+    const shadow = this.add.ellipse(0, 5 * instanceScale, 48, 13, 0x17221e, 0.35).setScale(instanceScale);
+    let preview; let labelY = -53 * instanceScale; let selectionBox = null;
+    if (object.type === "npc") preview = this.add.image(0, 0, "editor-npc-preview", 0).setOrigin(0.5, 0.86).setScale(0.3 * instanceScale);
     else if (object.type === "monster") {
-      preview = this.add.image(0, 0, "editor-monster-preview").setOrigin(0.5, 0.87).setScale(0.32).setTint(0xe9b4b4);
+      preview = this.add.image(0, 0, "editor-monster-preview").setOrigin(0.5, 0.87).setScale(0.32 * instanceScale).setTint(0xe9b4b4);
       const template = this.monsters.find((item) => item.id === object.monsterTemplateId);
       const appearance = resolveMonsterAppearance(template);
-      if (appearance.staticImageData) this.loadMarkerImage(preview, appearance.staticImageData, getMonsterAppearanceTextureKey(template, "map-editor-monster"));
-    } else preview = this.add.circle(0, -4, 22, info.color, 0.92).setStrokeStyle(3, 0xfff3c4);
-    const label = addText(this, 0, -53, object.name, 15, "#fff7dc", { origin: 0.5 });
-    marker.add([ring, shadow, preview, label]); this.markers.set(object.id, marker); this.uiCamera.ignore(marker);
+      if (appearance.staticImageData) this.loadMarkerImage(preview, appearance.staticImageData, getMonsterAppearanceTextureKey(template, "map-editor-monster"), {
+        width: 86 * instanceScale, height: 86 * instanceScale,
+      });
+    } else if (object.type === "building") {
+      const template = this.buildings.find((item) => item.id === object.buildingTemplateId);
+      const appearance = resolveBuildingAppearance(template);
+      const width = appearance.width * instanceScale;
+      const height = appearance.height * instanceScale;
+      const originY = appearance.anchor === "center" ? 0.5 : 1;
+      const boxY = appearance.anchor === "center" ? 0 : -height / 2;
+      ring.setVisible(false); shadow.setVisible(false);
+      preview = this.add.image(0, 0, "__WHITE").setOrigin(0.5, originY).setTint(info.color)
+        .setDisplaySize(appearance.imageData ? width : 58 * instanceScale, appearance.imageData ? height : 58 * instanceScale);
+      selectionBox = this.add.rectangle(0, boxY, width + 14, height + 14, 0xffd64e, selected ? 0.05 : 0)
+        .setStrokeStyle(selected ? 4 : 0, 0xffd64e);
+      labelY = appearance.anchor === "center" ? -height / 2 - 25 : -height - 25;
+      if (appearance.imageData) {
+        this.loadMarkerImage(preview, appearance.imageData, getBuildingAppearanceTextureKey(template, "map-editor-building"), {
+          width, height, exact: true,
+        });
+      }
+    } else preview = this.add.circle(0, -4 * instanceScale, 22, info.color, 0.92).setStrokeStyle(3, 0xfff3c4).setScale(instanceScale);
+    const label = addText(this, 0, labelY, object.name, 15, "#fff7dc", { origin: 0.5 });
+    marker.add([ring, shadow, preview, selectionBox, label].filter(Boolean)); this.markers.set(object.id, marker); this.uiCamera.ignore(marker);
   }
 
-  loadMarkerImage(preview, data, key) {
+  loadMarkerImage(preview, data, key, options = {}) {
     const apply = () => {
       if (!preview.active || !this.textures.exists(key)) return;
       const source = this.textures.get(key).getSourceImage();
-      const scale = Math.min(86 / source.width, 86 / source.height);
-      preview.setTexture(key).clearTint().setDisplaySize(source.width * scale, source.height * scale);
+      const width = options.width || 86; const height = options.height || 86;
+      preview.setTexture(key).clearTint().setAlpha(1);
+      if (options.exact) preview.setDisplaySize(width, height);
+      else {
+        const scale = Math.min(width / source.width, height / source.height);
+        preview.setDisplaySize(source.width * scale, source.height * scale);
+      }
     };
     if (this.textures.exists(key)) return apply();
     const image = new Image();
@@ -361,7 +529,31 @@ export class MapEditorScene extends Phaser.Scene {
     this.pushHistory(); this.mapObjects.splice(index, 1); this.selectedObjectId = null; this.renderMarkers(); this.buildUi();
   }
 
-  cancelSelection() { this.selectedObjectId = null; this.renderMarkers(); this.buildUi(); }
+  scaleSelected(delta) {
+    const selected = this.mapObjects.find((object) => object.id === this.selectedObjectId);
+    if (!selected) return this.notice("请先点击地图中的对象。", "#ffd08a");
+    const current = Number(selected.scale) || 1;
+    const next = Math.round(Phaser.Math.Clamp(current + delta, 0.25, 4) * 100) / 100;
+    if (next === current) return this.notice(next >= 4 ? "已达到最大 400%。" : "已达到最小 25%。", "#ffd08a");
+    this.pushHistory();
+    selected.scale = next;
+    this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+    this.renderMarkers(); this.buildUi();
+    this.notice(`「${selected.name}」已缩放为 ${Math.round(next * 100)}%，保存后在游戏中生效。`, "#dff0c7");
+  }
+
+  resetSelectedScale() {
+    const selected = this.mapObjects.find((object) => object.id === this.selectedObjectId);
+    if (!selected) return this.notice("请先点击地图中的对象。", "#ffd08a");
+    if ((Number(selected.scale) || 1) === 1) return;
+    this.pushHistory();
+    selected.scale = 1;
+    this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+    this.renderMarkers(); this.buildUi();
+    this.notice(`「${selected.name}」已恢复为 100%，保存后在游戏中生效。`, "#dff0c7");
+  }
+
+  cancelSelection() { this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi(); }
 
   save() {
     this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
@@ -383,13 +575,47 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   pointerMove(pointer) {
+    if (this.draggingObjectId && pointer.leftButtonDown()) {
+      const object = this.mapObjects.find((item) => item.id === this.draggingObjectId);
+      if (!object) return;
+      const world = this.mapCamera.getWorldPoint(pointer.x, pointer.y);
+      object.x = Math.round(Phaser.Math.Clamp(world.x + this.dragOffset.x, 0, this.mapConfig.worldWidth));
+      object.y = Math.round(Phaser.Math.Clamp(world.y + this.dragOffset.y, 0, this.mapConfig.worldHeight));
+      this.dragHasMoved = this.dragHasMoved
+        || Phaser.Math.Distance.Between(object.x, object.y, this.dragStartPosition.x, this.dragStartPosition.y) > 3;
+      this.markers.get(object.id)?.setPosition(object.x, object.y).setDepth(8 + object.y / 100000);
+      return;
+    }
     if (!this.panning || !pointer.middleButtonDown()) return;
     this.mapCamera.scrollX = this.panStart.scrollX - (pointer.x - this.panStart.x) / this.mapCamera.zoom;
     this.mapCamera.scrollY = this.panStart.scrollY - (pointer.y - this.panStart.y) / this.mapCamera.zoom;
     this.clampCamera();
   }
 
-  zoomAt(pointer, deltaY) { if (pointer.x >= 282) this.setZoom(this.mapCamera.zoom + (deltaY > 0 ? -0.055 : 0.055)); }
+  endPointerAction() {
+    this.panning = false;
+    if (!this.draggingObjectId) return;
+    if (this.dragHasMoved && this.dragStartSnapshot) {
+      this.pushHistorySnapshot(this.dragStartSnapshot);
+      this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+      this.buildUi();
+      this.notice("位置已调整，点击“保存到游戏”后生效。", "#dff0c7");
+    }
+    this.draggingObjectId = null;
+    this.dragStartSnapshot = null;
+    this.dragStartPosition = null;
+    this.dragOffset = null;
+    this.dragHasMoved = false;
+  }
+
+  handleWheel(pointer, deltaY) {
+    if (pointer.x < SIDEBAR_WIDTH && pointer.y >= 180 && pointer.y <= 700) {
+      this.scrollTemplateList(deltaY > 0 ? 1 : -1); return;
+    }
+    this.zoomAt(pointer, deltaY);
+  }
+
+  zoomAt(pointer, deltaY) { if (pointer.x >= SIDEBAR_WIDTH) this.setZoom(this.mapCamera.zoom + (deltaY > 0 ? -0.055 : 0.055)); }
   setZoom(value) { this.mapCamera.setZoom(Phaser.Math.Clamp(value, this.fitZoom(), 1.3)); this.clampCamera(); this.refreshTiles(); this.buildUi(); }
   focusWholeMap() { this.mapCamera.setZoom(this.fitZoom()).centerOn(this.mapConfig.worldWidth / 2, this.mapConfig.worldHeight / 2); this.clampCamera(); this.refreshTiles(); this.buildUi(); }
 

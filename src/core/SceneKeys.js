@@ -11,6 +11,7 @@ export const SceneKeys = Object.freeze({
   BUILDING_EDITOR: "BuildingEditorScene",
   CREATE: "CharacterCreateScene",
   VILLAGE: "VillageScene",
+  SECT: "SectScene",
   BATTLE: "BattleScene",
   RESULT: "ChapterResultScene",
 });

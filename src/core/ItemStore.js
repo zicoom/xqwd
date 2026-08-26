@@ -3,6 +3,8 @@
  *
  * 物品资料只在这里保存一次；商人、储物袋和以后战利品都会读取同一份模板。
  */
+import { getLegacyEditorData, loadEditorData, saveEditorData } from "./EditorFileRepository.js";
+
 const ITEM_STORE_KEY = "xuanqiong-wendao-item-templates-v1";
 
 // 编辑器与游戏内筛选统一使用这些类型，材料包含炼器、炼丹等基础素材。
@@ -228,54 +230,31 @@ export function normalizeItem(item = {}) {
 const createInitialItems = () => INITIAL_TEMPLATE_ITEMS.map(normalizeItem);
 
 export function getItemTemplates() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(ITEM_STORE_KEY) || "null");
-    if (Array.isArray(saved)) {
-      const existingItems = saved.map(normalizeItem);
-      const existingIds = new Set(existingItems.map((item) => item.id));
-      const additions = createInitialItems().filter((item) => !existingIds.has(item.id));
-
-      if (additions.length === 0) return existingItems;
-
-      const merged = [...existingItems, ...additions];
-      localStorage.setItem(ITEM_STORE_KEY, JSON.stringify(merged));
-      return merged;
-    }
-
-    const initial = createInitialItems();
-    localStorage.setItem(ITEM_STORE_KEY, JSON.stringify(initial));
-    return initial;
-  } catch (error) {
-    console.warn("物品模板读取失败：", error);
-    return createInitialItems();
+  const saved = loadEditorData("items");
+  // 本地服务器尚未重启或临时不可用时，也必须继续显示旧浏览器资料；不能把它误判成空资料。
+  const source = saved.ok ? saved.data : getLegacyEditorData(ITEM_STORE_KEY);
+  const existingItems = Array.isArray(source) ? source.map(normalizeItem) : createInitialItems();
+  const existingIds = new Set(existingItems.map((item) => item.id));
+  const merged = [...existingItems, ...createInitialItems().filter((item) => !existingIds.has(item.id))];
+  if (saved.ok && merged.length === existingItems.length) return existingItems;
+  if (saved.ok || saved.missing) {
+    const written = saveEditorData("items", merged);
+    if (written.ok && Array.isArray(written.data)) return written.data.map(normalizeItem);
+    if (!written.unavailable) console.warn("物品模板保存失败：", written.error);
+  } else if (!saved.unavailable) {
+    console.warn("物品模板读取失败：", saved.error);
   }
+  return merged;
 }
 
 export function saveItemTemplates(items) {
-  try {
-    const normalizedItems = items.map((item) => normalizeItem(item));
-    const serializedItems = JSON.stringify(normalizedItems);
-    localStorage.setItem(ITEM_STORE_KEY, serializedItems);
-
-    // 保存后立刻读回验证，避免储存空间不足时仍误提示“保存成功”。
-    const confirmedItems = localStorage.getItem(ITEM_STORE_KEY);
-    if (confirmedItems !== serializedItems) {
-      throw new Error("物品资料未能写入本地储存");
-    }
-
-    const parsedItems = JSON.parse(confirmedItems);
-    const isValid = Array.isArray(parsedItems)
-      && parsedItems.length === normalizedItems.length
-      && parsedItems.every((item, index) => item?.id === normalizedItems[index]?.id);
-    if (!isValid) {
-      throw new Error("物品资料写入验证失败");
-    }
-
-    return true;
-  } catch (error) {
-    console.warn("物品模板保存失败：", error);
-    return false;
+  const normalizedItems = items.map((item) => normalizeItem(item));
+  const saved = saveEditorData("items", normalizedItems);
+  if (saved.ok && Array.isArray(saved.data) && Array.isArray(items)) {
+    items.splice(0, items.length, ...saved.data.map(normalizeItem));
   }
+  if (!saved.ok) console.warn("物品模板保存失败：", saved.error);
+  return saved.ok;
 }
 
 export function getItemTemplate(id) { return getItemTemplates().find((item) => item.id === id) || null; }

@@ -1,6 +1,6 @@
 import { getPlayerPortrait } from "../PortraitCatalog.js";
 
-export const CURRENT_SAVE_VERSION = 3;
+export const CURRENT_SAVE_VERSION = 4;
 export const CURRENT_SAVE_CONTAINER_VERSION = 2;
 
 export const TECHNIQUE_SLOTS = Object.freeze({ main: null, auxiliary: [null, null, null, null], speed: null });
@@ -60,6 +60,7 @@ export function createDefaultSaveData() {
     world: {
       defeatedMonsterIds: [], playerPosition: { x: 980, y: 1260 }, miniMapVisitedPoints: [],
       merchantStock: {}, merchantSpiritStones: 125850,
+      completedQuestIds: [], sectProgress: {},
     },
   };
 }
@@ -118,6 +119,8 @@ function normalizeCurrentSave(input) {
       // 商店库存的 0 表示已售罄，必须保留；背包的 0 才可以删除。
       merchantStock: normalizeStock(world.merchantStock),
       merchantSpiritStones: finite(world.merchantSpiritStones, defaults.world.merchantSpiritStones),
+      completedQuestIds: array(world.completedQuestIds),
+      sectProgress: record(world.sectProgress),
       playerPosition: { x: finite(position.x, 980), y: finite(position.y, 1260) },
     },
   };
@@ -132,6 +135,15 @@ export const SAVE_MIGRATIONS = new Map([
     player: {
       ...save.player,
       combatShortcuts: defaultCombatShortcuts(save.player?.selectedElement),
+    },
+  })],
+  [3, (save) => ({
+    ...save,
+    version: 4,
+    world: {
+      ...save.world,
+      completedQuestIds: array(save.world?.completedQuestIds),
+      sectProgress: record(save.world?.sectProgress),
     },
   })],
 ]);

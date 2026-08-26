@@ -14,7 +14,6 @@ const DIALOG_THEME = Object.freeze({
   // 弹窗主体由深木色、内层木色和金色描边组成，保持仙侠器物的质感。
   panel: 0x21140d,
   panelInner: 0x2f1b11,
-  panelShadow: 0x0e0906,
   border: 0xc89643,
   borderSoft: 0x704621,
   gold: "#f5d77f",
@@ -94,11 +93,6 @@ export class XianxiaDialog {
       .setScale(0.94)
       .setAlpha(0);
 
-    // 投影让弹窗从地图背景中明显浮起，且不使用图片资源，任何新弹窗都能立即复用。
-    const shadow = this.scene.add.graphics();
-    shadow.fillStyle(DIALOG_THEME.panelShadow, 0.55);
-    shadow.fillRoundedRect(-width / 2 + 12, -height / 2 + 16, width, height, 18);
-
     // 面板外框、内框与四角纹样构成统一的“鎏金木匣”样式。
     const shell = this.scene.add.graphics();
     this.drawPanelShell(shell, width, height);
@@ -125,7 +119,7 @@ export class XianxiaDialog {
       align: "center",
       wordWrap: { width: width - 104 },
     });
-    this.container.add([shadow, shell, header, title, subtitle]);
+    this.container.add([shell, header, title, subtitle]);
 
     // 正文是可选的：设置类弹窗通常不需要，确认和说明弹窗则可直接传一段文字。
     if (options.body) {
@@ -216,9 +210,13 @@ export class XianxiaDialog {
     const { width, height, centerX, centerY, depth } = this.options;
     const buttonWidth = button.width ?? Math.min(310, width - 150);
     const buttonHeight = button.height ?? 48;
-    // 未指定 Y 坐标时，按钮会自动从面板下半部向上排列，适合简单确认弹窗。
-    const fallbackStartY = height / 2 - 85 - ((count - 1) * 58);
-    const localY = button.y ?? (fallbackStartY + index * 58);
+    // 未单独指定 Y 坐标时，整组按钮围绕同一个中心自动排布。
+    // 调用方只需给 buttonGroupY 指定按钮组中心，不再逐个手写坐标；这样组内间距统一，
+    // 并能保证整组按钮在弹窗内容区上下居中。未指定时默认以弹窗正中心为组中心。
+    const buttonGap = this.options.buttonGap ?? 58;
+    const buttonGroupY = this.options.buttonGroupY ?? 0;
+    const fallbackStartY = buttonGroupY - ((count - 1) * buttonGap) / 2;
+    const localY = button.y ?? (fallbackStartY + index * buttonGap);
     const variant = DIALOG_THEME[button.variant ?? "primary"] ?? DIALOG_THEME.primary;
     const localX = button.x ?? 0;
 
@@ -230,13 +228,15 @@ export class XianxiaDialog {
     // 按钮中间的浅金线模拟器物镶边，提升层次但不依赖任何额外美术资产。
     background.lineStyle(1, 0xf1d08a, 0.19);
     background.lineBetween(localX - buttonWidth / 2 + 10, localY - buttonHeight / 2 + 6, localX + buttonWidth / 2 - 10, localY - buttonHeight / 2 + 6);
-    const text = this.createCenteredText(localX, localY, button.label ?? "确认", buttonWidth, button.size ?? 18, "#fff0c7", {
+    // 按钮文字直接以按钮的几何中心为锚点，不使用正文的固定宽度排版。
+    // 这样无论文字长短或浏览器如何缩放，文字都会同时保持水平、垂直居中。
+    const text = addText(this.scene, localX, localY, button.label ?? "确认", button.size ?? 18, "#fff0c7", {
       // 按钮文字同样禁用粗描边，保证每个汉字在缩放后仍然清晰、居中。
       fontFamily: DIALOG_FONT_FAMILY,
       fontStyle: "normal",
       strokeThickness: 0,
       align: "center",
-    });
+    }).setOrigin(0.5);
     this.container.add([background, text]);
 
     const area = this.scene.add.zone(centerX + localX, centerY + localY, buttonWidth + 12, buttonHeight + 10)
@@ -276,10 +276,11 @@ export class XianxiaDialog {
     icon.fillRoundedRect(localX - 19, localY - 19, 38, 38, 6);
     icon.lineStyle(1, DIALOG_THEME.borderSoft, 1);
     icon.strokeRoundedRect(localX - 19, localY - 19, 38, 38, 6);
-    const text = this.createCenteredText(localX, localY - 1, "×", 38, 26, "#f0dca5", {
+    const text = addText(this.scene, localX, localY, "×", 26, "#f0dca5", {
       fontFamily: DIALOG_FONT_FAMILY,
       strokeThickness: 0,
-    });
+      align: "center",
+    }).setOrigin(0.5);
     this.container.add([icon, text]);
     this.closeArea = this.scene.add.zone(centerX + localX, centerY + localY, 48, 48)
       .setScrollFactor(0)
