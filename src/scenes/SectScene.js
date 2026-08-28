@@ -9,6 +9,8 @@ import { InventoryService } from "../domain/inventory/InventoryService.js";
 import { AlchemyService } from "../domain/alchemy/AlchemyService.js";
 import { AlchemyMinigameService } from "../domain/alchemy/AlchemyMinigameService.js";
 import { RetreatStudyService } from "../domain/cultivation/RetreatStudyService.js";
+import { CultivationBreakthroughService } from "../domain/cultivation/CultivationBreakthroughService.js";
+import { BreakthroughTrialService } from "../domain/cultivation/BreakthroughTrialService.js";
 import { CultivationRetreatService } from "../domain/cultivation/CultivationRetreatService.js";
 import { startCultivationBackgroundMusic, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
 import { AlchemyRoomPanel } from "../ui/sect/AlchemyRoomPanel.js";
@@ -26,7 +28,8 @@ export class SectScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image("sect-mountain-background", "./public/assets/images/battle/battle-mountain-background.png");
+    // 门派总览使用独立的宗门山水图；炼丹房、闭关室继续加载各自的专用背景，不能混用。
+    this.load.image("sect-mountain-background", "./public/assets/images/sects/sect-tianjian-background.jpg");
     const retreatAssetRoot = "./public/assets/images/pixso/retreat";
     this.load.image("pixso-retreat-background", `${retreatAssetRoot}/1ce11dac1b3ae7ddf89196f96f332081a4307d24.png`);
     this.load.image("pixso-retreat-meditation", `${retreatAssetRoot}/8cdee4c3a21d40617d9605e80eed37a8088c52d1.png`);
@@ -82,6 +85,11 @@ export class SectScene extends Phaser.Scene {
       sectId: sect.id,
       save: saveFirstChapterProgress,
     });
+    this.cultivationBreakthroughService = new CultivationBreakthroughService({
+      player: gameState.player,
+      save: saveFirstChapterProgress,
+    });
+    this.breakthroughTrialService = new BreakthroughTrialService();
     this.overview = new SectOverviewPanel(this, {
       sect,
       onBack: () => this.returnToWorld(),
@@ -121,6 +129,8 @@ export class SectScene extends Phaser.Scene {
         ...common,
         service: this.retreatService,
         cultivationService: this.cultivationRetreatService,
+        breakthroughService: this.cultivationBreakthroughService,
+        breakthroughRules: this.breakthroughTrialService,
         onProgressChanged: () => this.overview.playerTopToolbar.refreshPlayerStatus?.(),
       });
       return;

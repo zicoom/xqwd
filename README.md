@@ -8,10 +8,11 @@
 
 ## 启动方法
 
-不要直接双击 `index.html`。请在项目目录打开终端后运行：
+不要直接双击 `index.html`，也不要使用普通静态服务器。物品、NPC、建筑和地图编辑器需要
+项目自带的本地数据接口；请双击根目录的 `启动游戏.bat`，或在项目目录运行：
 
 ```powershell
-python -m http.server 8000
+node server.cjs
 ```
 
 然后在浏览器访问 `http://localhost:8000`。

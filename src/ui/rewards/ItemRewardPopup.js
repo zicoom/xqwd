@@ -33,8 +33,20 @@ export class ItemRewardPopup {
     this.layer.setVisible(true);
   }
 
+  /** 多种奖励按顺序展示；玩家关闭当前卡片后自动显示下一种。 */
+  showMany(entries = []) {
+    this.queue = entries.filter((entry) => entry?.item && Number(entry.quantity) > 0).map((entry) => ({ ...entry }));
+    const first = this.queue.shift();
+    if (first) this.show(first.item, first.quantity);
+  }
+
   hide() {
+    const next = this.queue?.shift?.();
+    if (next) {
+      this.show(next.item, next.quantity);
+      return;
+    }
+    this.queue = [];
     this.layer.setVisible(false);
   }
 }
-

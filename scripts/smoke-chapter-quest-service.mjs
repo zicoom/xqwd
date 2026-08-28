@@ -4,6 +4,7 @@ import {
   QINGYUN_INVESTIGATION_ID,
   QUEST_EVENTS,
   QUEST_STATUS,
+  QINGYUN_QUEST_STEPS,
 } from "../src/domain/quests/ChapterQuestService.js";
 
 /**
@@ -13,12 +14,17 @@ import {
 const createState = (overrides = {}) => ({
   chapter: {
     ancientJadeFound: false,
+    eliteDefeated: false,
     qingyunInvestigation: QUEST_STATUS.NOT_STARTED,
     qingyunGuideEnabled: false,
     ...(overrides.chapter || {}),
   },
   player: {
     hasJade: false,
+    hp: 60,
+    maxHp: 60,
+    qi: 30,
+    maxQi: 30,
     ...(overrides.player || {}),
   },
 });
@@ -48,13 +54,15 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(accepted.ok, true);
   assert.equal(accepted.changed, true);
   assert.equal(state.chapter.qingyunInvestigation, QUEST_STATUS.ACTIVE);
+  assert.equal(state.chapter.qingyunInvestigationStep, QINGYUN_QUEST_STEPS.GATHER_HERB);
   assert.equal(state.chapter.qingyunGuideEnabled, false);
   assert.equal(saveCount, 1);
   assert.equal(service.acceptQuest(QINGYUN_INVESTIGATION_ID).alreadyActive, true);
   assert.equal(saveCount, 1);
 
   assert.equal(service.setGuideEnabled(QINGYUN_INVESTIGATION_ID, true).ok, true);
-  assert.equal(service.shouldShowTargetMarker(QINGYUN_INVESTIGATION_ID), true);
+  // 第一站是灵草，不应该误显示终点古玉的地图光圈。
+  assert.equal(service.shouldShowTargetMarker(QINGYUN_INVESTIGATION_ID), false);
   assert.equal(service.shouldShowGuide(QINGYUN_INVESTIGATION_ID), true);
   assert.equal(saveCount, 2);
 
@@ -65,7 +73,7 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(saveCount, 3);
 }
 
-// 只有任务进行中时，找到古玉事件才能完成任务并发放一次古玉线索奖励。
+// 主线必须依次经历“采集 → 抉择 → 风险/绕路 → 古玉”，不能从地图事件直接跳关。
 {
   const state = createState();
   let saveCount = 0;
@@ -73,6 +81,13 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.ANCIENT_JADE_FOUND).ok, false);
   service.acceptQuest(QINGYUN_INVESTIGATION_ID);
   service.setGuideEnabled(QINGYUN_INVESTIGATION_ID, true);
+  assert.equal(service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.ANCIENT_JADE_FOUND).ok, false);
+  assert.equal(service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.HERB_GATHERED).ok, true);
+  assert.equal(state.chapter.qingyunInvestigationStep, QINGYUN_QUEST_STEPS.CHOOSE_PATH);
+  const safe = service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.SAFE_PATH_CHOSEN);
+  assert.equal(safe.ok, true);
+  assert.equal(state.chapter.qingyunInvestigationStep, QINGYUN_QUEST_STEPS.FIND_ANCIENT_JADE);
+  assert.equal(service.canDiscoverAncientJade(), true);
   const completed = service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.ANCIENT_JADE_FOUND);
   assert.equal(completed.ok, true);
   assert.equal(completed.completed, true);
@@ -85,12 +100,12 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(state.chapter.qingyunGuideEnabled, false);
   assert.equal(state.chapter.ancientJadeFound, true);
   assert.equal(state.player.hasJade, true);
-  assert.equal(saveCount, 3);
+  assert.equal(saveCount, 5);
 
   const repeated = service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.ANCIENT_JADE_FOUND);
   assert.equal(repeated.ok, false);
   assert.equal(repeated.alreadyCompleted, true);
-  assert.equal(saveCount, 3);
+  assert.equal(saveCount, 5);
   assert.equal(service.canRepeatJadeInteraction(), true);
 }
 
@@ -105,6 +120,10 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(active.quest.badgeLabel, "进行中");
   assert.equal(active.quest.canEnableGuide, true);
   assert.match(service.getHudView().text, /调查青云山异光/);
+  service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.HERB_GATHERED);
+  service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.RISK_PATH_CHOSEN);
+  assert.equal(service.getQuestView().goal, "击败拦路的雾隐山魈");
+  service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.MIST_GUARDIAN_DEFEATED);
   service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.ANCIENT_JADE_FOUND);
   assert.equal(service.getJournalView("active").hasTask, false);
   assert.equal(service.getJournalView("completed").quest.badgeLabel, "已完成");
@@ -121,6 +140,7 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(activeService.reconcileLegacyState().changed, true);
   assert.equal(activeLegacy.chapter.ancientJadeFound, false);
   assert.equal(activeLegacy.player.hasJade, false);
+  assert.equal(activeLegacy.chapter.qingyunInvestigationStep, QINGYUN_QUEST_STEPS.GATHER_HERB);
   assert.equal(activeSaveCount, 1);
 
   const completedLegacy = createState({
@@ -140,4 +160,40 @@ const createService = (state, onSave = () => true) => new ChapterQuestService({
   assert.equal(invalidLegacy.chapter.qingyunGuideEnabled, false);
 }
 
-console.log("章节任务领域冒烟测试通过：接取、引路、放弃、推进、完成、奖励和旧档修复正确。");
+// “重新体验第一章”必须通过领域服务一次性恢复任务、章节战斗标记和角色战斗资源。
+{
+  const state = createState({
+    chapter: {
+      qingyunInvestigation: QUEST_STATUS.COMPLETED,
+      qingyunGuideEnabled: true,
+      ancientJadeFound: true,
+      eliteDefeated: true,
+    },
+    player: { hasJade: true, hp: 7, qi: 2 },
+  });
+  let saveCount = 0;
+  const service = createService(state, () => { saveCount += 1; return true; });
+  const restarted = service.restartChapter();
+
+  assert.equal(restarted.ok, true);
+  assert.equal(restarted.restarted, true);
+  assert.equal(state.chapter.qingyunInvestigation, QUEST_STATUS.NOT_STARTED);
+  assert.equal(state.chapter.qingyunGuideEnabled, false);
+  assert.equal(state.chapter.ancientJadeFound, false);
+  assert.equal(state.chapter.eliteDefeated, false);
+  assert.equal(state.chapter.qingyunInvestigationStep, null);
+  assert.equal(state.player.hasJade, false);
+  assert.equal(state.player.hp, state.player.maxHp);
+  assert.equal(state.player.qi, state.player.maxQi);
+  assert.equal(saveCount, 1);
+
+  // 重开后先回到“未接取”；重新接取后必须先完成前置探索，不能直接触发古玉。
+  assert.equal(service.canDiscoverAncientJade(), false);
+  service.acceptQuest();
+  assert.equal(service.canDiscoverAncientJade(), false);
+  service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.HERB_GATHERED);
+  service.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.SAFE_PATH_CHOSEN);
+  assert.equal(service.canDiscoverAncientJade(), true);
+}
+
+console.log("章节任务领域冒烟测试通过：接取、引路、放弃、推进、完成、重开、奖励和旧档修复正确。");

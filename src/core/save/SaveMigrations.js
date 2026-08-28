@@ -1,6 +1,6 @@
 import { getPlayerPortrait } from "../PortraitCatalog.js";
 
-export const CURRENT_SAVE_VERSION = 4;
+export const CURRENT_SAVE_VERSION = 5;
 export const CURRENT_SAVE_CONTAINER_VERSION = 2;
 
 export const TECHNIQUE_SLOTS = Object.freeze({ main: null, auxiliary: [null, null, null, null], speed: null });
@@ -46,7 +46,7 @@ export function createDefaultSaveData() {
       // 存档只保存立绘编号；实际图片由 PortraitCatalog 按编号加载，避免把图片数据写入 localStorage。
       portraitId: "cultivator-female",
       hp: 60, maxHp: 60, qi: 30, maxQi: 30, attack: 9, defense: 3,
-      resistance: 0, resistanceTypes: [], cultivationExp: 0, learnedSkills: [], learnedTechniques: [],
+      resistance: 0, resistanceTypes: [], cultivationExp: 0, cultivationExpTarget: 1000, learnedSkills: [], learnedTechniques: [],
       equippedTechniques: clone(TECHNIQUE_SLOTS),
       equippedArtifacts: Object.fromEntries(ARTIFACT_SLOT_IDS.map((slotId) => [slotId, null])),
       combatShortcuts: defaultCombatShortcuts("火"),
@@ -55,7 +55,7 @@ export function createDefaultSaveData() {
     },
     chapter: {
       ancientJadeFound: false, eliteDefeated: false,
-      qingyunInvestigation: "not_started", qingyunGuideEnabled: false,
+      qingyunInvestigation: "not_started", qingyunInvestigationStep: null, qingyunGuideEnabled: false,
     },
     world: {
       defeatedMonsterIds: [], playerPosition: { x: 980, y: 1260 }, miniMapVisitedPoints: [],
@@ -73,6 +73,7 @@ function normalizeCurrentSave(input) {
   const world = record(source.world);
   const maxHp = Math.max(1, finite(player.maxHp, defaults.player.maxHp, 1));
   const maxQi = finite(player.maxQi, defaults.player.maxQi);
+  const cultivationExpTarget = Math.max(1, Math.floor(finite(player.cultivationExpTarget, defaults.player.cultivationExpTarget, 1)));
   const position = record(world.playerPosition);
 
   return {
@@ -91,7 +92,8 @@ function normalizeCurrentSave(input) {
       attack: finite(player.attack, defaults.player.attack),
       defense: finite(player.defense, defaults.player.defense),
       resistance: finite(player.resistance, 0),
-      cultivationExp: finite(player.cultivationExp, 0),
+      cultivationExp: Math.min(cultivationExpTarget, Math.floor(finite(player.cultivationExp, 0))),
+      cultivationExpTarget,
       spiritStones: finite(player.spiritStones, defaults.player.spiritStones),
       resistanceTypes: array(player.resistanceTypes),
       learnedSkills: array(player.learnedSkills),
@@ -144,6 +146,15 @@ export const SAVE_MIGRATIONS = new Map([
       ...save.world,
       completedQuestIds: array(save.world?.completedQuestIds),
       sectProgress: record(save.world?.sectProgress),
+    },
+  })],
+  [4, (save) => ({
+    ...save,
+    version: 5,
+    player: {
+      ...save.player,
+      // 突破系统尚未开放时，全部旧档统一停在炼气阶段的 1000 修为上限。
+      cultivationExpTarget: Math.max(1, Math.floor(finite(save.player?.cultivationExpTarget, 1000, 1))),
     },
   })],
 ]);

@@ -35,15 +35,19 @@ import {
   isMovementBlockedByBuildings,
 } from "../domain/world/BuildingCollisionService.js";
 import { SectAccessService } from "../domain/world/SectAccessService.js";
+import { MapExplorationService } from "../domain/world/MapExplorationService.js";
 import { SaveArchiveRepository } from "../core/save/SaveArchiveRepository.js";
 import {
   ChapterQuestService,
   QINGYUN_INVESTIGATION_ID,
   QUEST_EVENTS,
+  QINGYUN_QUEST_STEPS,
 } from "../domain/quests/ChapterQuestService.js";
+import { NpcInteractionService } from "../domain/quests/NpcInteractionService.js";
 import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
 import { ItemRewardPopup } from "../ui/rewards/ItemRewardPopup.js";
 import { SectEntrancePrompt } from "../ui/sect/SectEntrancePrompt.js";
+import { createBuildingMapLabel } from "../ui/world/BuildingMapLabel.js";
 
 /**
  * 栖霞村探索场景。
@@ -138,6 +142,8 @@ export class VillageScene extends Phaser.Scene {
     this.load.image("quest-direction-arrow", "./public/assets/images/ui/chapter-map/quest-direction-arrow.png");
     // NPC 尚未制作地图立绘时使用的任务问号。
     this.load.image("npc-map-question-mark", "./public/assets/images/ui/chapter-map/npc-question-mark.png");
+    // 建筑名称统一使用用户提供的 86×296 黑色竖向笔刷，不再显示小号描边文字。
+    this.load.image("map-building-name-brush", "./public/assets/images/ui/chapter-map/building-name-brush.png");
     // 附近修士资料卡的 Pixso 装饰线与按钮图标。
     this.load.image("npc-profile-divider-top", "./public/assets/images/ui/npc-profile/profile-divider-top.png");
     this.load.image("npc-profile-divider-center", "./public/assets/images/ui/npc-profile/profile-divider-center.png");
@@ -170,6 +176,9 @@ export class VillageScene extends Phaser.Scene {
     // 但世界坐标、存档位置、建筑碰撞和地图编辑器资料都保持原值，不会因此错位。
     this.cameras.main.setZoom(0.88);
     this.worldCamera = this.cameras.main;
+    // UI 镜头必须在第一张地图块显示之前创建。这样初始预加载的地图块与探索途中
+    // 异步补上的地图块走同一条“仅世界镜头渲染”的路径，避免任何一块短暂漏到右侧 HUD 附近。
+    this.uiCamera = this.cameras.add(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).setName("village-ui").setZoom(1);
     // 场景只在这里装配业务服务；商店、功法、法术之间不再互相调用 UI 方法。
     this.itemCatalog = new ItemCatalog({
       resolveTexture: (item) => {
@@ -185,6 +194,13 @@ export class VillageScene extends Phaser.Scene {
       player: gameState.player,
       world: gameState.world,
       inventoryService: this.inventoryService,
+      save: saveFirstChapterProgress,
+    });
+    this.npcInteractionService = new NpcInteractionService({
+      player: gameState.player,
+      world: gameState.world,
+      inventoryService: this.inventoryService,
+      itemCatalog: this.itemCatalog,
       save: saveFirstChapterProgress,
     });
     this.artifactService = new ArtifactLoadoutService({ player: gameState.player, catalog: this.itemCatalog, save: saveFirstChapterProgress });
@@ -209,6 +225,12 @@ export class VillageScene extends Phaser.Scene {
     });
     // 旧版本可能留下“进行中却已有古玉”等矛盾状态，只在装配阶段显式修复一次。
     this.questService.reconcileLegacyState();
+    // 小地图足迹的采样、容量和存档状态修改属于世界规则；HUD 只消费服务返回的坐标并绘制。
+    this.mapExplorationService = new MapExplorationService({
+      world: gameState.world,
+      save: saveFirstChapterProgress,
+    });
+    this.mapExplorationService.reconcileLegacyState();
     this.merchantPanel = new MerchantPanel({ scene: this, shopService: this.shopService, save: saveFirstChapterProgress });
     this.characterMenu = new CharacterMenuPanel(this, {
       catalog: this.itemCatalog,
@@ -276,9 +298,6 @@ export class VillageScene extends Phaser.Scene {
     // 设置世界边界并让镜头平滑追随主角；UI 会在下方单独固定，不随镜头移动。
     this.worldCamera.setBounds(0, 0, this.worldSize.width, this.worldSize.height);
     this.worldCamera.startFollow(this.player, true, 0.09, 0.09);
-    // 世界镜头缩小时，`scrollFactor(0)` 的 HUD 若仍由同一镜头绘制，也会被挤向屏幕中心。
-    // 因此增加一台 1:1 的界面镜头：地图与角色只由 worldCamera 绘制，所有固定界面只由 uiCamera 绘制。
-    this.uiCamera = this.cameras.add(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).setName("village-ui").setZoom(1);
 
     this.target = null;
     this.jadePosition = new Phaser.Math.Vector2(2440, 760);
@@ -287,6 +306,22 @@ export class VillageScene extends Phaser.Scene {
     // 两层光圈模拟古玉微光；正式项目中可替换为粒子特效贴图。
     this.jadeMarker.push(this.add.circle(this.jadePosition.x, this.jadePosition.y, 52, 0x9cf2de, 0.2).setStrokeStyle(2, 0xeef4bd, 0.8).setDepth(29));
     this.jadeMarker.push(addText(this, this.jadePosition.x, this.jadePosition.y - 78, "任务地点：古潭问道台", 18, "#fff2a7", { origin: 0.5 }).setDepth(31));
+    // 第一章的主线不再直接把玩家送到古玉旁。两个清晰的世界锚点让“采集—抉择—战斗/绕路”
+    // 发生在地图上；它们只保存阶段，不把坐标、图形或动画写入存档。
+    this.herbPosition = new Phaser.Math.Vector2(1810, 1260);
+    this.pathPosition = new Phaser.Math.Vector2(2160, 990);
+    this.herbMarker = this.createQingyunAdventureMarker(this.herbPosition, {
+      title: "异光灵草",
+      subtitle: "采集线索",
+      color: 0x8fd693,
+      glow: 0x3f8757,
+    });
+    this.pathMarker = this.createQingyunAdventureMarker(this.pathPosition, {
+      title: "雾岚岔路",
+      subtitle: "作出抉择",
+      color: 0xf0bb62,
+      glow: 0x8c5b2d,
+    });
     this.createQuestGuide();
     this.createQuestAcceptedNotice();
 
@@ -457,7 +492,10 @@ export class VillageScene extends Phaser.Scene {
 
   createHud() {
     // 界面由独立文件 ChapterMapHud 负责，地图场景不再混入大量排版代码。
-    this.chapterMapHud = new ChapterMapHud(this, { questService: this.questService });
+    this.chapterMapHud = new ChapterMapHud(this, {
+      questService: this.questService,
+      explorationService: this.mapExplorationService,
+    });
     this.chapterMapHud.create();
     // 保留以下引用，兼容地图场景已有的附近对象检测逻辑。
     this.nearbyNameText = this.chapterMapHud.nearbyNameText;
@@ -929,6 +967,10 @@ export class VillageScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setScale(this.mapConfig.displayScale)
       .setDepth(-10);
+    // 地图块会在探索途中异步加载。创建后必须立刻排除 1:1 的 UI 镜头；
+    // 若等到下一次低频镜头同步，短暂的双镜头绘制会把新地图块覆盖在错误的屏幕坐标上，
+    // 玩家移动到新区域时就会看见一次闪屏。
+    this.uiCamera?.ignore(tile);
     this.mapTileObjects.set(key, tile);
   }
 
@@ -1047,6 +1089,7 @@ export class VillageScene extends Phaser.Scene {
       let portrait;
       let questionMark = null;
       let markerNumber = null;
+      let buildingLabel = null;
       let labelY = -58 * instanceScale;
       let typeLabelY = -39 * instanceScale;
       const isMerchant = object.type === "npc" && this.isMerchantNpc(object);
@@ -1107,8 +1150,11 @@ export class VillageScene extends Phaser.Scene {
         shadow.setVisible(false);
         portrait = this.add.image(0, 0, "__WHITE").setOrigin(0.5, originY).setTint(info.color)
           .setDisplaySize(appearance.imageData ? width : 58 * instanceScale, appearance.imageData ? height : 58 * instanceScale);
-        labelY = appearance.anchor === "center" ? -height / 2 - 25 : -height - 25;
-        typeLabelY = labelY + 20;
+        const buildingTopY = appearance.anchor === "center" ? -height / 2 : -height;
+        buildingLabel = createBuildingMapLabel(this, {
+          name: object.name,
+          buildingTopY,
+        });
         if (appearance.imageData) {
           const textureKey = getBuildingAppearanceTextureKey(object.buildingTemplate, "map-building-custom");
           const applyBuildingImage = () => {
@@ -1129,9 +1175,9 @@ export class VillageScene extends Phaser.Scene {
         portrait = this.add.circle(0, -6 * instanceScale, 22, info.color, 0.92).setStrokeStyle(3, 0xfff0bd).setScale(instanceScale);
       }
       // 问号标记严格保持图 2 的简洁样式；姓名与交互提示在靠近后的左下信息卡显示。
-      const label = npcNeedsMapPortrait ? null : addText(this, 0, labelY, object.name, 14, "#fff8de", { origin: 0.5 });
-      const typeLabel = npcNeedsMapPortrait ? null : addText(this, 0, typeLabelY, object.type === "monster" ? "怪物 · 按 E 战斗" : isMerchant ? "商人 · 按 E 购物" : object.type === "npc" ? "NPC · 按 E 对话" : info.name, 11, "#e2efcf", { origin: 0.5, strokeThickness: 2 });
-      marker.add([shadow, portrait, questionMark, markerNumber, label, typeLabel].filter(Boolean));
+      const label = npcNeedsMapPortrait || object.type === "building" ? null : addText(this, 0, labelY, object.name, 14, "#fff8de", { origin: 0.5 });
+      const typeLabel = npcNeedsMapPortrait || object.type === "building" ? null : addText(this, 0, typeLabelY, object.type === "monster" ? "怪物 · 按 E 战斗" : isMerchant ? "商人 · 按 E 购物" : object.type === "npc" ? "NPC · 按 E 对话" : info.name, 11, "#e2efcf", { origin: 0.5, strokeThickness: 2 });
+      marker.add([shadow, portrait, questionMark, markerNumber, buildingLabel, label, typeLabel].filter(Boolean));
       if (object.type === "npc") {
         // NPC 既保留靠近后按 E，也支持直接点击；距离不足时先自动走近，避免接引流程只靠键盘。
         const interactionZone = this.add.zone(0, -22 * instanceScale, 110 * instanceScale, 150 * instanceScale)
@@ -1200,6 +1246,11 @@ export class VillageScene extends Phaser.Scene {
     }
     if (this.dialog.visible) {
       if (this.dialogTree && this.currentDialogueChoices?.length) {
+        // 分支对话除了鼠标和数字键，也允许沿用地图最常用的 E / 空格确认第一项。
+        // 古玉战斗选择因此不会出现“文字说按 E，实际却只能按数字”的假卡死。
+        if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || Phaser.Input.Keyboard.JustDown(this.keys.E)) {
+          this.chooseDialogueChoice(this.currentDialogueChoices[0]);
+        }
         [this.keys.ONE, this.keys.TWO, this.keys.THREE, this.keys.FOUR].forEach((key, index) => {
           if (Phaser.Input.Keyboard.JustDown(key) && this.currentDialogueChoices[index]) this.chooseDialogueChoice(this.currentDialogueChoices[index]);
         });
@@ -1246,22 +1297,7 @@ export class VillageScene extends Phaser.Scene {
     this.updateQuestGuide();
     this.updateNearbyInteraction();
     this.updateNearbySectEntrance();
-    const jadeDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.jadePosition.x, this.jadePosition.y);
-    const canDiscoverJade = this.questService.canDiscoverAncientJade();
-    if (canDiscoverJade && jadeDistance < 300) {
-      this.operationHint.setText("古潭问道台就在附近，继续靠近中央玉光。 ");
-    }
-    if (canDiscoverJade && jadeDistance < 150) {
-      this.startJadeStory();
-    } else if (this.questService.canRepeatJadeInteraction() && jadeDistance < 75) {
-      // 古玉剧情完成后，它仍是永久测试入口，但不能直接强制开战：
-      // 每次按 E 都先打开对话，由玩家自行选择战斗或返回地图。
-      this.operationHint.setText("奇异玉光：按 E 查看玉光（可在对话中选择战斗或返回）。");
-      if (Phaser.Input.Keyboard.JustDown(this.keys.E)) {
-        this.rememberPlayerPosition();
-        this.openJadeRepeatDialogue();
-      }
-    }
+    this.updateQingyunAdventureInteraction();
   }
 
   /** 寻找最近的编辑器对象，并在底部告诉玩家可以做什么。 */
@@ -1313,7 +1349,8 @@ export class VillageScene extends Phaser.Scene {
       this.dialogMapObjectId = object.id;
       this.setDialogueMapMarkerVisible(false);
       const guideContext = this.sectAccessService.getGuideContext(object, this.editorObjects);
-      if (guideContext) {
+      const hasConfiguredReward = this.npcInteractionService.hasDialogueReward(object.npcTemplate);
+      if (guideContext && !hasConfiguredReward) {
         const ownsToken = this.sectAccessService.hasAccessToken(guideContext.sect);
         this.dialogNameText.setText(guideContext.guide.title || object.name || "接引人");
         this.openDialogue(
@@ -1324,7 +1361,12 @@ export class VillageScene extends Phaser.Scene {
         return;
       }
       this.dialogNameText.setText((object.name || "修士").replace(/^栖霞村/, ""));
-      this.openDialogue(object.dialogue, null, object.npcTemplate?.portraitData, object.npcTemplate?.dialogueTree);
+      this.openDialogue(
+        object.dialogue,
+        hasConfiguredReward ? () => this.completeNpcDialogueInteraction(object) : null,
+        object.npcTemplate?.portraitData,
+        object.npcTemplate?.dialogueTree,
+      );
     } else if (object.type === "monster") {
       this.scene.start(SceneKeys.BATTLE, { mapMonster: object });
     } else if (object.type === "building") {
@@ -1395,6 +1437,14 @@ export class VillageScene extends Phaser.Scene {
     const result = this.sectAccessService.grantGuideToken(npcObject, this.editorObjects);
     if (!result.ok) return;
     this.itemRewardPopup.show(this.itemCatalog.getById(result.itemId), result.quantity);
+  }
+
+  /** 结算 NPC 编辑器配置的对话赠礼；场景只负责展示，发放和防重复由领域服务完成。 */
+  completeNpcDialogueInteraction(npcObject) {
+    const result = this.npcInteractionService.completeDialogue(npcObject?.npcTemplate);
+    if (!result.ok) return result;
+    this.itemRewardPopup.showMany(result.grants);
+    return result;
   }
 
   /** 开始一段可翻页的对话；最后一句结束后执行可选回调。 */
@@ -1547,6 +1597,26 @@ export class VillageScene extends Phaser.Scene {
     const acceptsQingyunQuest = choice.action === "accept-qingyun-investigation"
       || ["elder-start-1", "elder-accept-1", "elder-clue-1", "elder-worry-1"].includes(choice.id);
     if (acceptsQingyunQuest) this.acceptQingyunInvestigation();
+    if (choice.action === "qingyun-safe-route") {
+      this.finishDialogue();
+      this.chooseQingyunPath(QUEST_EVENTS.SAFE_PATH_CHOSEN);
+      return;
+    }
+    if (choice.action === "qingyun-risk-route") {
+      this.finishDialogue();
+      this.chooseQingyunPath(QUEST_EVENTS.RISK_PATH_CHOSEN);
+      return;
+    }
+    if (choice.action === "qingyun-jade-battle") {
+      this.finishDialogue();
+      this.scene.start(SceneKeys.BATTLE, { testBattle: true });
+      return;
+    }
+    if (choice.action === "qingyun-jade-leave") {
+      this.finishDialogue();
+      this.operationHint?.setText("古玉已取得。想再次试战时，靠近玉光按 E 即可。");
+      return;
+    }
     if (choice.nextId && this.dialogTree.nodes.some((node) => node.id === choice.nextId)) {
       this.dialogNodeId = choice.nextId;
       this.showDialogueNode();
@@ -1619,6 +1689,9 @@ export class VillageScene extends Phaser.Scene {
   acceptQingyunInvestigation() {
     const result = this.questService.acceptQuest(QINGYUN_INVESTIGATION_ID);
     if (!result.ok) return result;
+    // 第一次接取任务就自动开始引路。新玩家不会因为不知道“任务日志”入口而在出生点迷路；
+    // 仍可在日志中关闭/重开，不改变领域层的手动引路规则。
+    this.questService.setGuideEnabled(QINGYUN_INVESTIGATION_ID, true);
     this.chapterMapHud?.updateQuestPanel();
     this.updateQingyunQuestMarker();
     this.showQuestAcceptedNotice();
@@ -1626,9 +1699,164 @@ export class VillageScene extends Phaser.Scene {
     return result;
   }
 
+  /** 供任务日志的“重新体验”按钮调用；旧档可直接回到第一步试玩新的主线循环。 */
+  restartQingyunQuest() {
+    const result = this.questService.restartChapter();
+    if (!result.ok) return result;
+    this.target = null;
+    this.chapterMapHud?.updateQuestPanel();
+    this.chapterMapHud?.closeTaskLog();
+    this.updateQingyunQuestMarker();
+    this.updateQuestGuide();
+    this.operationHint?.setText("第一章已重置：前往村长重新接取“调查青云山异光”。");
+    return result;
+  }
+
   updateQingyunQuestMarker() {
     const visible = this.questService.shouldShowTargetMarker(QINGYUN_INVESTIGATION_ID);
     this.jadeMarker?.forEach((display) => display.setVisible(visible));
+    const showAdventureMarker = this.questService.shouldShowGuide(QINGYUN_INVESTIGATION_ID);
+    const step = this.questService.getStep(QINGYUN_INVESTIGATION_ID);
+    this.setQingyunMarkerVisible(this.herbMarker, showAdventureMarker && step === QINGYUN_QUEST_STEPS.GATHER_HERB);
+    this.setQingyunMarkerVisible(this.pathMarker, showAdventureMarker && [
+      QINGYUN_QUEST_STEPS.CHOOSE_PATH,
+      QINGYUN_QUEST_STEPS.DEFEAT_GUARDIAN,
+    ].includes(step));
+  }
+
+  /** 创建没有图片依赖的主线锚点：中心符印、呼吸光圈与两行短标签。 */
+  createQingyunAdventureMarker(position, { title, subtitle, color, glow }) {
+    const ring = this.add.circle(position.x, position.y, 54, glow, 0.22)
+      .setStrokeStyle(2, color, 0.8)
+      .setDepth(28)
+      .setVisible(false);
+    const core = this.add.circle(position.x, position.y, 26, color, 0.9)
+      .setStrokeStyle(3, 0xfff3bf, 0.92)
+      .setDepth(30)
+      .setVisible(false);
+    const glyph = addText(this, position.x, position.y - 1, title === "异光灵草" ? "采" : "途", 22, "#24301f", { origin: 0.5 })
+      .setDepth(31)
+      .setVisible(false);
+    const label = addText(this, position.x, position.y - 88, title, 18, "#fff2b6", { origin: 0.5 })
+      .setDepth(31)
+      .setVisible(false);
+    const detail = addText(this, position.x, position.y - 62, subtitle, 14, "#d8e6c4", { origin: 0.5 })
+      .setDepth(31)
+      .setVisible(false);
+    this.tweens.add({ targets: ring, scale: 1.14, alpha: 0.42, duration: 860, yoyo: true, repeat: -1, ease: "Sine.InOut" });
+    return [ring, core, glyph, label, detail];
+  }
+
+  setQingyunMarkerVisible(marker, visible) {
+    marker?.forEach((display) => display.setVisible(visible));
+  }
+
+  getQingyunQuestTarget() {
+    const step = this.questService.getStep(QINGYUN_INVESTIGATION_ID);
+    if (step === QINGYUN_QUEST_STEPS.GATHER_HERB) return this.herbPosition;
+    if ([QINGYUN_QUEST_STEPS.CHOOSE_PATH, QINGYUN_QUEST_STEPS.DEFEAT_GUARDIAN].includes(step)) return this.pathPosition;
+    return this.jadePosition;
+  }
+
+  /**
+   * 第一章地图上的可玩循环。
+   * 碰撞、输入和对话交给场景；“阶段能否前进”交给 ChapterQuestService，避免玩家通过重复按键跳过奖励或战斗。
+   */
+  updateQingyunAdventureInteraction() {
+    if (this.dialog?.visible || this.npcProfilePanel?.visible) return;
+    const step = this.questService.getStep(QINGYUN_INVESTIGATION_ID);
+    const active = this.questService.isActive(QINGYUN_INVESTIGATION_ID);
+    const justInteract = Phaser.Input.Keyboard.JustDown(this.keys.E);
+
+    if (active && step === QINGYUN_QUEST_STEPS.GATHER_HERB) {
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.herbPosition.x, this.herbPosition.y);
+      if (distance < 190) this.operationHint.setText(distance < 86
+        ? "异光灵草：按 E 采集聚气草，追踪异光来源。"
+        : "感应到微弱灵息，继续靠近山道旁的异光灵草。");
+      if (distance < 86 && justInteract) this.collectQingyunHerb();
+      return;
+    }
+
+    if (active && step === QINGYUN_QUEST_STEPS.CHOOSE_PATH) {
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pathPosition.x, this.pathPosition.y);
+      if (distance < 210) this.operationHint.setText(distance < 96
+        ? "雾岚岔路：按 E 决定绕路，或进入浓雾挑战妖兽。"
+        : "雾气中的两道灵息在前方交汇，继续靠近雾岚岔路。");
+      if (distance < 96 && justInteract) this.openQingyunPathChoice();
+      return;
+    }
+
+    if (active && step === QINGYUN_QUEST_STEPS.DEFEAT_GUARDIAN) {
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pathPosition.x, this.pathPosition.y);
+      if (distance < 210) this.operationHint.setText(distance < 96
+        ? "浓雾妖气未散：按 E 再次挑战雾隐山魈。"
+        : "雾隐山魈仍守在雾岚岔路，继续靠近后挑战它。");
+      if (distance < 96 && justInteract) this.scene.start(SceneKeys.BATTLE, { adventureBattle: "qingyun-mist-guardian" });
+      return;
+    }
+
+    const jadeDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.jadePosition.x, this.jadePosition.y);
+    if (this.questService.canDiscoverAncientJade() && jadeDistance < 210) {
+      this.operationHint.setText(jadeDistance < 110
+        ? "古潭问道台：按 E 查看古玉。"
+        : "古潭问道台就在附近，继续靠近中央玉光。");
+      if (jadeDistance < 110 && justInteract) this.startJadeStory();
+    } else if (this.questService.canRepeatJadeInteraction() && jadeDistance < 75) {
+      this.operationHint.setText("奇异玉光：按 E 查看玉光（可在对话中选择战斗或返回）。");
+      if (justInteract) {
+        this.rememberPlayerPosition();
+        this.openJadeRepeatDialogue();
+      }
+    }
+  }
+
+  collectQingyunHerb() {
+    if (this.questService.getStep() !== QINGYUN_QUEST_STEPS.GATHER_HERB) return;
+    const result = this.questService.advanceQuest(QINGYUN_INVESTIGATION_ID, QUEST_EVENTS.HERB_GATHERED);
+    if (!result.ok) return;
+    this.inventoryService.grant("juqicao", 1);
+    this.chapterMapHud?.updateQuestPanel();
+    this.updateQingyunQuestMarker();
+    this.updateQuestGuide();
+    this.openDialogue([
+      "你从岩缝中采下一株聚气草。叶脉中残留的异光忽明忽灭，指向前方的雾岚岔路。",
+      "获得：聚气草 × 1。接下来可以选择绕开浓雾，或追入雾中寻找更强的线索。",
+    ]);
+  }
+
+  openQingyunPathChoice() {
+    if (this.questService.getStep() !== QINGYUN_QUEST_STEPS.CHOOSE_PATH) return;
+    this.dialogNameText.setText("雾岚岔路");
+    this.openDialogue([], null, "", {
+      nodes: [{
+        id: "qingyun-path-choice",
+        text: "左边的灵息平稳，却会错过浓雾中更强的机缘；右边妖气翻涌，显然有守卫盘踞。你准备怎么做？",
+        choices: [
+          { id: "qingyun-safe-route", text: "沿稳妥山道绕行（获得灵石 × 4，跳过战斗）", action: "qingyun-safe-route" },
+          { id: "qingyun-risk-route", text: "循异光进入浓雾（挑战雾隐山魈，奖励更丰厚）", action: "qingyun-risk-route" },
+        ],
+      }],
+      startId: "qingyun-path-choice",
+    });
+  }
+
+  chooseQingyunPath(eventId) {
+    const result = this.questService.advanceQuest(QINGYUN_INVESTIGATION_ID, eventId);
+    if (!result.ok) return;
+    this.chapterMapHud?.updateQuestPanel();
+    this.updateQingyunQuestMarker();
+    this.updateQuestGuide();
+    if (eventId === QUEST_EVENTS.RISK_PATH_CHOSEN) {
+      this.openDialogue([
+        "浓雾骤然收拢，一只雾隐山魈从岩壁跃下。击败它后，才能继续追踪古潭的异光！",
+        "提示：胜利后会得到灵石与星萤果，并自动回到此处继续主线。",
+      ], () => this.scene.start(SceneKeys.BATTLE, { adventureBattle: "qingyun-mist-guardian" }));
+      return;
+    }
+    this.openDialogue([
+      "你避开了妖气最重的山路，在碎石间找到几枚遗落灵石。",
+      "获得：灵石 × 4。灵息再次汇向山脚古潭，前往问道台寻找古玉吧。",
+    ]);
   }
 
   /** 接取任务后的顶部提示。 */
@@ -1699,8 +1927,10 @@ export class VillageScene extends Phaser.Scene {
       this.setQuestGuideVisible(false);
       return;
     }
-    // 贴在屏幕中央附近，不会被右侧任务栏挡住；箭头本身会朝向古潭。
-    const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, this.jadePosition.x, this.jadePosition.y);
+    // 贴在屏幕中央附近，不会被右侧任务栏挡住；目标随当前主线步骤切换，
+    // 这样玩家不会看到“采集灵草”却被箭头直接带到古玉的矛盾导航。
+    const target = this.getQingyunQuestTarget();
+    const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, target.x, target.y);
     const x = 960 + Math.cos(angle) * 250;
     const y = 540 + Math.sin(angle) * 190;
     this.questGuideArrow
@@ -1794,18 +2024,33 @@ export class VillageScene extends Phaser.Scene {
 
   /** 古玉剧情读完后，由玩家自己决定是否进入测试战斗。 */
   showJadeBattleChoice() {
-    this.openDialogue([
-      "劫修就在附近。是否现在进入战斗测试？",
-      "按 E / 空格：进入战斗；点击“返回地图”或按 Esc：暂时离开。",
-    ], () => this.scene.start(SceneKeys.BATTLE, { testBattle: true }));
+    this.dialogNameText.setText("劫修来袭");
+    this.openDialogue([], null, "", {
+      nodes: [{
+        id: "qingyun-jade-battle-choice",
+        text: "劫修已经逼近。现在迎战，还是先退回山道整备？",
+        choices: [
+          { id: "qingyun-jade-fight", text: "立即迎战（点击此项，或按 E / 空格）", action: "qingyun-jade-battle" },
+          { id: "qingyun-jade-leave", text: "暂时离开，稍后再回来", action: "qingyun-jade-leave" },
+        ],
+      }],
+      startId: "qingyun-jade-battle-choice",
+    });
   }
 
   /** 已发现古玉后的重复交互对话，方便随时测试战斗但不强制进入。 */
   openJadeRepeatDialogue() {
-    this.openDialogue([
-      "古玉仍在微微发烫，仿佛在回应你的灵气。",
-      "附近的劫修气息再度出现。若想测试战斗，可以继续向前。",
-      "按 E / 空格：进入战斗；点击“返回地图”或按 Esc：暂时离开。",
-    ], () => this.scene.start(SceneKeys.BATTLE, { testBattle: true }));
+    this.dialogNameText.setText("古玉异动");
+    this.openDialogue([], null, "", {
+      nodes: [{
+        id: "qingyun-jade-repeat-choice",
+        text: "古玉仍在微微发烫，附近再次出现劫修气息。要进入战斗吗？",
+        choices: [
+          { id: "qingyun-jade-repeat-fight", text: "进入战斗（点击此项，或按 E / 空格）", action: "qingyun-jade-battle" },
+          { id: "qingyun-jade-repeat-leave", text: "不再触碰古玉，返回地图", action: "qingyun-jade-leave" },
+        ],
+      }],
+      startId: "qingyun-jade-repeat-choice",
+    });
   }
 }

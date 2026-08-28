@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { CultivationRetreatService } from "../src/domain/cultivation/CultivationRetreatService.js";
 
-function createContext() {
-  const player = { cultivationExp: 100 };
+function createContext({ cultivationExp = 100, cultivationExpTarget = 10000 } = {}) {
+  const player = { cultivationExp, cultivationExpTarget };
   const world = { sectProgress: {} };
   let saves = 0;
   const service = new CultivationRetreatService({
@@ -46,5 +46,13 @@ assert.equal(context.world.sectProgress["sect:tianjian"].retreat.meditationSessi
 assert.equal(context.world.sectProgress["sect:tianjian"].retreat.meditationCultivation, 3600);
 assert.equal(context.service.advanceMeditation(23000).ok, false, "完成后不能重复结算");
 assert.ok(context.saves() >= 2, "逐步获得与出关结果必须写入存档");
+
+const cappedContext = createContext({ cultivationExp: 700, cultivationExpTarget: 1000 });
+assert.equal(cappedContext.service.beginMeditation(12, 0).ok, true);
+const capped = cappedContext.service.advanceMeditation(1000);
+assert.equal(capped.capped, true, "清修中达到瓶颈后应自动停止，不能继续空转累积经验");
+assert.equal(cappedContext.player.cultivationExp, 1000);
+assert.equal(capped.gainedExp, 300);
+assert.equal(cappedContext.service.beginMeditation(12, 2000).ok, false, "满修为后需要先突破");
 
 console.log("普通清修冒烟测试通过：逐步增长、时长校验、提前出关、完整结算和防重复正确。");

@@ -1,4 +1,5 @@
 import { getRetreatDurations, getRetreatStudies, getRetreatStudy } from "../../core/RetreatCatalog.js";
+import { grantCultivationExp } from "./CultivationProgressService.js";
 
 const asRecord = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -182,8 +183,10 @@ export class RetreatStudyService {
     state.lastMindGrade = String(mindResult.grade || "未知");
 
     const expMultiplier = clamp(Number(mindResult.expMultiplier) || 0.15, 0.1, 1.5);
-    const gainedExp = Math.max(1, Math.round(study.cultivationExp * duration.expMultiplier * expMultiplier));
-    this.player.cultivationExp = Math.max(0, Number(this.player.cultivationExp) || 0) + gainedExp;
+    const requestedExp = Math.max(1, Math.round(study.cultivationExp * duration.expMultiplier * expMultiplier));
+    const cultivation = grantCultivationExp(this.player, requestedExp);
+    const gainedExp = cultivation.gained;
+    const breakthroughHint = cultivation.isFull ? "已达当前修为上限，需要突破后才能继续获得经验。" : "";
     if (mindResult.forcedFailure) {
       this.save();
       return {
@@ -194,7 +197,7 @@ export class RetreatStudyService {
         duration,
         mindResult,
         gainedExp,
-        message: `${mindResult.grade}心境，未能领悟${study.name}；静修所得修为 +${gainedExp}`,
+        message: `${mindResult.grade}心境，未能领悟${study.name}；静修所得修为 +${gainedExp}。${breakthroughHint}`,
       };
     }
 
@@ -219,7 +222,7 @@ export class RetreatStudyService {
       mindResult,
       gainedExp,
       learnedItem: this.itemCatalog.getById(study.learnedItemId),
-      message: grantResult.ok ? `${mindResult.grade}心境，${study.name}已铭刻于心，修为 +${gainedExp}` : grantResult.message,
+      message: grantResult.ok ? `${mindResult.grade}心境，${study.name}已铭刻于心，修为 +${gainedExp}。${breakthroughHint}` : grantResult.message,
     };
   }
 

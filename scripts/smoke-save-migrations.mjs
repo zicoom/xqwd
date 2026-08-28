@@ -15,6 +15,7 @@ const legacy = {
     roots: { 火: 7 },
     hp: 999,
     maxHp: 80,
+    cultivationExp: 18961,
     spiritStones: "42",
     inventory: { herb: "3", invalid: -4 },
     equippedTechniques: { auxiliary: ["a"] },
@@ -30,6 +31,8 @@ assert.equal(migrated.migrated, true);
 assert.equal(migrated.data.version, CURRENT_SAVE_VERSION);
 assert.equal(migrated.data.player.name, "旧档修士");
 assert.equal(migrated.data.player.hp, 80);
+assert.equal(migrated.data.player.cultivationExp, 1000, "旧档超出当前境界上限的修为必须裁切");
+assert.equal(migrated.data.player.cultivationExpTarget, 1000);
 assert.equal(migrated.data.player.spiritStones, 42);
 assert.deepEqual(migrated.data.player.inventory, { herb: 3 });
 assert.deepEqual(migrated.data.player.equippedTechniques.auxiliary, ["a", null, null, null]);

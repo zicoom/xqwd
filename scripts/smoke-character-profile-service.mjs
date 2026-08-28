@@ -36,6 +36,6 @@ assert.equal(profile.loadout.artifactCount, 2);
 assert.equal(profile.loadout.spellCount, 2);
 assert.deepEqual(
   getCultivationProgress({ cultivationExp: 1250, cultivationExpTarget: 2400 }),
-  { experience: 1250, target: 2400 },
+  { experience: 1250, target: 2400, isFull: false },
 );
 console.log("角色属性资料服务冒烟验证通过。");

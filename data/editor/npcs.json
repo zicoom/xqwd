@@ -4,7 +4,7 @@
     "isNew": false,
     "merchant": false,
     "name": "村长",
-    "portraitData": "/public/assets/images/editor/npcs/npc-qixia-elder-portraitData.webp",
+    "portraitData": "/public/assets/images/editor/npcs/npc-qixia-elder-imageData.webp",
     "avatarData": "/public/assets/images/editor/npcs/npc-qixia-elder-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-qixia-elder-imageData.webp",
@@ -22,7 +22,7 @@
               "id": "elder-start-1",
               "text": "我愿意前往青云山。",
               "nextId": "elder-accept",
-              "action": ""
+              "action": "accept-qingyun-investigation"
             },
             {
               "id": "elder-start-2",
@@ -46,7 +46,7 @@
               "id": "elder-accept-1",
               "text": "我现在就出发。",
               "nextId": "elder-task",
-              "action": ""
+              "action": "accept-qingyun-investigation"
             },
             {
               "id": "elder-accept-2",
@@ -70,7 +70,7 @@
               "id": "elder-clue-1",
               "text": "我会去古潭查看。",
               "nextId": "elder-task",
-              "action": ""
+              "action": "accept-qingyun-investigation"
             },
             {
               "id": "elder-clue-2",
@@ -94,7 +94,7 @@
               "id": "elder-worry-1",
               "text": "我明白了，我会去调查。",
               "nextId": "elder-task",
-              "action": ""
+              "action": "accept-qingyun-investigation"
             },
             {
               "id": "elder-worry-2",
@@ -145,10 +145,15 @@
     },
     "quest": {
       "enabled": false,
+      "mode": "none",
       "title": "",
       "description": "",
       "target": "",
-      "reward": ""
+      "reward": "",
+      "rewardItems": [],
+      "repeatPolicy": "once",
+      "claimId": "",
+      "completionQuestId": ""
     }
   },
   {
@@ -156,7 +161,7 @@
     "isNew": false,
     "merchant": false,
     "name": "新 NPC1",
-    "portraitData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-portraitData.webp",
+    "portraitData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-imageData.webp",
     "avatarData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-imageData.webp",
@@ -191,10 +196,15 @@
     },
     "quest": {
       "enabled": false,
+      "mode": "none",
       "title": "",
       "description": "",
       "target": "",
-      "reward": ""
+      "reward": "",
+      "rewardItems": [],
+      "repeatPolicy": "once",
+      "claimId": "",
+      "completionQuestId": ""
     }
   },
   {
@@ -202,7 +212,7 @@
     "isNew": false,
     "merchant": true,
     "name": "云游商人",
-    "portraitData": "/public/assets/images/editor/npcs/npc-qixia-merchant-portraitData.webp",
+    "portraitData": "/public/assets/images/editor/npcs/npc-qixia-merchant-imageData.webp",
     "avatarData": "/public/assets/images/editor/npcs/npc-qixia-merchant-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-qixia-merchant-imageData.webp",
@@ -246,10 +256,105 @@
     },
     "quest": {
       "enabled": false,
+      "mode": "none",
       "title": "",
       "description": "",
       "target": "",
-      "reward": ""
+      "reward": "",
+      "rewardItems": [],
+      "repeatPolicy": "once",
+      "claimId": "",
+      "completionQuestId": ""
+    }
+  },
+  {
+    "id": "npc-1787797767226-1013",
+    "isNew": true,
+    "merchant": false,
+    "name": "天剑宗接引人",
+    "portraitData": "/public/assets/images/editor/npcs/npc-1787797767226-1013-imageData.webp",
+    "avatarData": "/public/assets/images/editor/npcs/npc-1787797767226-1013-imageData.webp",
+    "mapPortraitData": "",
+    "imageData": "/public/assets/images/editor/npcs/npc-1787797767226-1013-imageData.webp",
+    "dialogue": [],
+    "dialogueTree": {
+      "startId": "node-1787797914850-1",
+      "nodes": [
+        {
+          "id": "node-1787797914850-1",
+          "text": "来者止步。前方乃天剑宗山门，非本宗弟子与持令之人，不得擅自入内。",
+          "choices": [
+            {
+              "id": "choice-1787817445743",
+              "text": "",
+              "nextId": "",
+              "action": ""
+            }
+          ]
+        },
+        {
+          "id": "node-1787817596117-6",
+          "text": "我观你灵台清明，虽修为尚浅，却有几分剑修之资。你可是想入山一观？",
+          "choices": []
+        },
+        {
+          "id": "node-1787817609459-6",
+          "text": "天剑宗不问出身，却极重心性。持此令牌，只代表你获准进入外门，并非已经拜入宗门。",
+          "choices": []
+        },
+        {
+          "id": "node-1787817625619-4",
+          "text": "入山之后须谨守门规，不可扰乱门中修士，也不可擅闯宗门禁地。",
+          "choices": []
+        },
+        {
+          "id": "node-1787817630819-5",
+          "text": "收好这枚天剑宗令牌。山门禁制自会辨认你的身份——去吧，莫负此行。",
+          "choices": []
+        }
+      ]
+    },
+    "skills": [],
+    "profile": {
+      "gender": "男",
+      "realm": "炼气后期",
+      "sect": "天剑宗",
+      "identity": "接引人",
+      "lifespan": 156,
+      "qi": 10,
+      "spirit": 6,
+      "attack": 4,
+      "defense": 8,
+      "agility": 6,
+      "roots": {
+        "金": 4,
+        "木": 3,
+        "水": 2,
+        "火": 0,
+        "土": 0,
+        "风": "",
+        "雷": "",
+        "冰": "",
+        "魔": "",
+        "神": ""
+      }
+    },
+    "quest": {
+      "enabled": true,
+      "mode": "talk_reward",
+      "title": "天剑宗接引凭证",
+      "description": "完成对话后赠送天剑宗令牌，持令牌可进入天剑宗。",
+      "target": "完整结束对话",
+      "reward": "",
+      "rewardItems": [
+        {
+          "itemId": "sect:tianjian-token",
+          "quantity": 1
+        }
+      ],
+      "repeatPolicy": "if_missing",
+      "claimId": "",
+      "completionQuestId": "quest:tianjian-introduction"
     }
   }
 ]

@@ -1,8 +1,13 @@
+import {
+  DEFAULT_CULTIVATION_EXP_TARGET,
+  getCultivationProgress,
+  getCultivationTarget,
+  grantCultivationExp,
+  isCultivationFull,
+} from "../cultivation/CultivationProgressService.js";
+
 const BASE_ROOTS = Object.freeze(["金", "木", "水", "火", "土"]);
 const SPECIAL_ROOTS = Object.freeze(["风", "雷", "冰", "神", "魔"]);
-// 当前第一章尚未接入完整的境界经验表，因此先使用炼气阶段的基础目标值。
-// 后续境界系统只需在角色数据中提供 cultivationExpTarget，属性页就会自动显示新上限。
-const DEFAULT_CULTIVATION_EXP_TARGET = 1000;
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -14,16 +19,14 @@ function itemName(catalog, itemId) {
   return catalog?.getById?.(itemId)?.name || "未知功法";
 }
 
-/**
- * 读取角色的修为经验进度。
- * 修为经验与战斗中的灵气是两套独立数据：前者用于角色成长，后者用于施放法术。
- */
-export function getCultivationProgress(player = {}) {
-  return {
-    experience: Math.max(0, number(player.cultivationExp)),
-    target: Math.max(1, number(player.cultivationExpTarget, DEFAULT_CULTIVATION_EXP_TARGET)),
-  };
-}
+// 保留原导出路径，避免已有 HUD、属性页和外部模块因为规则下沉而改动导入位置。
+export {
+  DEFAULT_CULTIVATION_EXP_TARGET,
+  getCultivationProgress,
+  getCultivationTarget,
+  grantCultivationExp,
+  isCultivationFull,
+};
 
 /**
  * 角色属性的只读查询服务。它把现有存档、功法、法术和法宝数据整合为 UI 可展示的资料，

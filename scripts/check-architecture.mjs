@@ -96,6 +96,17 @@ for (const file of collectJavaScriptFiles(sourceRoot)) {
     if (/gameState\.(?:chapter\.(?:qingyunInvestigation|qingyunGuideEnabled|ancientJadeFound)|player\.hasJade)\b/.test(executableSource)) {
       failures.push(`${relativePath}: 场景不能直接读取或修改章节任务状态，应调用 ChapterQuestService`);
     }
+    if (!/from\s+["'][^"']*\/domain\/world\/MapExplorationService\.js["']/.test(executableSource)) {
+      failures.push(`${relativePath}: 大地图场景必须通过 MapExplorationService 记录探索足迹`);
+    }
+  }
+  if (relativePath === "src/scenes/ChapterResultScene.js") {
+    if (!/from\s+["'][^"']*\/domain\/quests\/ChapterQuestService\.js["']/.test(executableSource)) {
+      failures.push(`${relativePath}: 章节重玩必须通过 ChapterQuestService 统一重置状态`);
+    }
+    if (/gameState\.(?:chapter\.(?:qingyunInvestigation|qingyunGuideEnabled|ancientJadeFound|eliteDefeated)|player\.(?:hasJade|hp|qi))\s*=/.test(executableSource)) {
+      failures.push(`${relativePath}: 章节结算场景不能直接重置任务或角色资源`);
+    }
   }
   if (relativePath === "src/ui/ChapterMapHud.js") {
     if (/\bsaveFirstChapterProgress\b/.test(executableSource)) {
@@ -103,6 +114,9 @@ for (const file of collectJavaScriptFiles(sourceRoot)) {
     }
     if (/gameState\.(?:chapter\.(?:qingyunInvestigation|qingyunGuideEnabled|ancientJadeFound)|player\.hasJade)\b/.test(executableSource)) {
       failures.push(`${relativePath}: HUD 不能直接读取或修改章节任务状态，应消费任务视图数据`);
+    }
+    if (/\b(?:gameState|miniMapVisitedPoints)\b/.test(executableSource)) {
+      failures.push(`${relativePath}: HUD 不能直接读取或修改探索存档，应消费 MapExplorationService`);
     }
   }
 }

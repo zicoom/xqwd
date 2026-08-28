@@ -2,9 +2,11 @@ import { getRetreatBookPreviews } from "../../core/RetreatCatalog.js";
 import { gameState } from "../../core/GameState.js";
 import { getCultivationProgress } from "../../domain/character/CharacterProfileService.js";
 import { addText, playUiClickSound } from "../../utils/UiHelpers.js";
+import { BreakthroughMinigamePanel } from "./BreakthroughMinigamePanel.js";
 
 const TITLE_FONT = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
 const UI_FONT = '"SJ yuantijian-C-Regular", "Microsoft YaHei", sans-serif';
+const BUTTON_FONT = '"SJ yuantijian-Z-Regular", "Microsoft YaHei", sans-serif';
 const COLORS = Object.freeze({
   navy: 0x070916,
   panel: 0x161d30,
@@ -39,10 +41,13 @@ const textStyle = (origin = 0.5, extra = {}) => ({
 
 /** 严格按 Pixso 页面 2 复刻的闭关室界面；规则和存档仍由领域服务负责。 */
 export class RetreatRoomPanel {
-  constructor(scene, { service, cultivationService, sectName, onBack, onProgressChanged }) {
+  constructor(scene, { service, cultivationService, breakthroughService, breakthroughRules, sectName, onBack, onProgressChanged }) {
     this.scene = scene;
     this.service = service;
     this.cultivationService = cultivationService;
+    this.breakthroughService = breakthroughService;
+    this.breakthroughRules = breakthroughRules;
+    this.breakthroughPanel = null;
     this.sectName = sectName;
     this.onBack = onBack;
     this.onProgressChanged = onProgressChanged;
@@ -84,6 +89,8 @@ export class RetreatRoomPanel {
     const progress = Math.min(1, cultivation.experience / Math.max(1, cultivation.target));
     const active = this.cultivationService.getActiveMeditation();
     const plan = active?.plan || this.cultivationService.getPlan(this.selectedMonths);
+    const atBottleneck = !active && cultivation.isFull;
+    const breakthrough = atBottleneck ? this.breakthroughService?.getInfo?.() : null;
 
     this.addMainText(960, 207, gameState.player.name, 30, "#eff2f7", { fontFamily: TITLE_FONT });
     this.addMainText(960, 248, gameState.player.realm, 18, "#d9a942");
@@ -96,26 +103,53 @@ export class RetreatRoomPanel {
     this.drawKindButton(602, 546, "spell");
     this.drawKindButton(1318, 546, "technique");
 
-    this.addMainText(960, 781, `闭关 ${plan?.years || 1} 年`, 26, "#e8edf7", { fontFamily: TITLE_FONT });
-    this.addMainText(960, 822, active
-      ? `已获得：+${active.gainedExp} / ${active.totalExp} 修为`
-      : `获得：+${plan?.totalExp || 0} 修为`, 17, "#e6bd54");
-    this.drawDurationControl(plan, active);
+    this.addMainText(960, 781, atBottleneck ? "修 为 圆 满" : `闭关 ${plan?.years || 1} 年`, 26, atBottleneck ? "#f2cc74" : "#e8edf7", { fontFamily: TITLE_FONT });
+    this.addMainText(960, 822, atBottleneck
+      ? `当前瓶颈：${breakthrough?.realm || gameState.player.realm} · 可冲击 ${breakthrough?.nextRealm || "下一境界"}`
+      : active
+        ? `已获得：+${active.gainedExp} / ${active.totalExp} 修为`
+        : `获得：+${plan?.totalExp || 0} 修为`, 17, "#e6bd54");
+    if (atBottleneck) this.drawBreakthroughHint(breakthrough);
+    else this.drawDurationControl(plan, active);
 
     const state = this.cultivationService.getState();
-    this.addMainText(960, 942, active
+    this.addMainText(960, 942, atBottleneck
+      ? "修为已至瓶颈，突破后将重新积累下一阶段修为。"
+      : active
       ? `吐纳进行中 · 剩余约 ${Math.ceil(active.remainingMs / 1000)} 秒`
       : `★ 累计闭关 ${this.formatMonths(state.totalMonths)}，闭关越久修为越丰厚`, 14, "#b7a05f");
-    this.makeButton(this.content, 960, 990, 200, 55, active ? "提前出关" : "开始闭关", () => {
+    this.makeButton(this.content, 960, 990, 200, 55, active ? "提前出关" : atBottleneck ? "突破修为" : "开始闭关", () => {
       if (active) this.abortCultivationRetreat();
+      else if (atBottleneck) this.startBreakthrough();
       else this.startCultivationRetreat();
-    }, { fontSize: 21 });
+    }, {
+      fontSize: 20,
+      fontFamily: BUTTON_FONT,
+      textColor: "#ffffff",
+      fill: atBottleneck ? 0x7a5524 : 0x4162ae,
+      hoverFill: atBottleneck ? 0x9b7130 : 0x4c6fbd,
+      strokeWidth: 0,
+      radius: 12,
+    });
 
-    this.makeButton(this.content, 1762, 991, 185, 55, "离开闭关室", () => this.close(), { fontSize: 19 });
+    this.makeButton(this.content, 1762, 991, 185, 55, "离开闭关室", () => this.close(), {
+      fontSize: 18,
+      fontFamily: BUTTON_FONT,
+      textColor: "#b2cbf7",
+      gradient: [0x27384b, 0x151d26],
+      hoverGradient: [0x31465d, 0x1b2632],
+      stroke: 0x485971,
+      strokeWidth: 2,
+      radius: 10,
+    });
     this.makeButton(this.content, 1804, 80, 120, 64, "闭关室", () => {}, {
       fontSize: 20,
-      fill: 0x35291f,
-      hoverFill: 0x35291f,
+      textColor: "#ecc87c",
+      fill: 0x33271a,
+      hoverFill: 0x33271a,
+      stroke: 0x6d625a,
+      strokeWidth: 2,
+      radius: 10,
     });
 
     if (message) this.showToast(message, 960, 1038, this.content, 2500);
@@ -142,12 +176,27 @@ export class RetreatRoomPanel {
         this.selectedMonths = duration.months;
         this.renderMain("");
       }, {
-        fontSize: 15,
-        fill: selected ? 0x426ba7 : 0x182238,
-        hoverFill: selected ? 0x426ba7 : 0x263553,
-        stroke: selected ? 0x8db8ff : 0x435573,
+        fontSize: 16,
+        textColor: selected ? "#d0dbe6" : "#a5b3d8",
+        fill: selected ? 0x708ac6 : 0x1d2337,
+        fillAlpha: selected ? 0.3 : 1,
+        hoverFill: selected ? 0x708ac6 : 0x263553,
+        hoverFillAlpha: selected ? 0.42 : 1,
+        stroke: 0x708ac6,
+        strokeWidth: selected ? 2 : 0,
+        radius: 8,
       });
     });
+  }
+
+  /** 满修为时替代时长控件，避免让玩家误以为还可以继续累积经验。 */
+  drawBreakthroughHint(breakthrough) {
+    const scene = this.scene;
+    this.addRoundedPanel(this.content, 960, 851, 315, 54, 10, 0x211a16, 0.92, 0x9d7835, 1);
+    this.addMainText(960, 851, breakthrough?.nextRealm
+      ? `冲击 ${breakthrough.nextRealm}`
+      : "当前境界后续未开放", 18, "#f0ca71");
+    this.addMainText(960, 900, "突破后继续修行", 15, "#a9a2a0");
   }
 
   drawKindButton(x, y, kind) {
@@ -321,6 +370,27 @@ export class RetreatRoomPanel {
     this.renderMain("");
   }
 
+  startBreakthrough() {
+    if (this.breakthroughPanel) return;
+    const preview = this.breakthroughRules?.createTrial?.(gameState.player);
+    if (!preview?.ok) {
+      this.renderMain(preview?.message || "突破试炼未准备好。");
+      return;
+    }
+    this.root.setVisible(false);
+    this.breakthroughPanel = new BreakthroughMinigamePanel(this.scene, {
+      rules: this.breakthroughRules,
+      player: gameState.player,
+      onResolve: (outcome) => {
+        const result = this.breakthroughService.resolveTrial(outcome);
+        this.onProgressChanged?.();
+        return result;
+      },
+      onAbort: (message) => this.closeBreakthroughPanel(message),
+      onClose: () => this.closeBreakthroughPanel(),
+    });
+  }
+
   ensureMeditationTimer() {
     if (this.meditationTimer) return;
     this.meditationTimer = this.scene.time.addEvent({ delay: 100, loop: true, callback: () => this.advanceCultivationRetreat() });
@@ -337,7 +407,7 @@ export class RetreatRoomPanel {
     const cultivation = getCultivationProgress(gameState.player);
     this.cultivationFill?.setScale(Math.min(1, cultivation.experience / Math.max(1, cultivation.target)), 1);
     this.cultivationValue?.setText(`${cultivation.experience} / ${cultivation.target}`);
-    if (result.completed) {
+    if (result.completed || result.capped) {
       this.stopMeditationTimer();
       this.renderMain(result.message);
       return;
@@ -390,20 +460,26 @@ export class RetreatRoomPanel {
     const fill = options.fill ?? COLORS.button;
     const hoverFill = options.hoverFill ?? COLORS.buttonHover;
     const stroke = options.stroke ?? 0xd4a64b;
-    const redraw = (color) => {
+    const strokeWidth = options.strokeWidth ?? 2;
+    const redraw = (color, alpha, gradient = null) => {
       visual.clear();
-      visual.fillStyle(color, 1);
+      if (gradient) visual.fillGradientStyle(gradient[0], gradient[0], gradient[1], gradient[1], 1, 1, 1, 1);
+      else visual.fillStyle(color, alpha);
       visual.fillRoundedRect(-width / 2, -height / 2, width, height, options.radius ?? 4);
-      visual.lineStyle(options.strokeWidth ?? 2, stroke, 1);
-      visual.strokeRoundedRect(-width / 2, -height / 2, width, height, options.radius ?? 4);
+      if (strokeWidth > 0) {
+        visual.lineStyle(strokeWidth, stroke, 1);
+        visual.strokeRoundedRect(-width / 2, -height / 2, width, height, options.radius ?? 4);
+      }
     };
-    redraw(fill);
+    redraw(fill, options.fillAlpha ?? 1, options.gradient);
     const hit = scene.add.rectangle(0, 0, width, height, 0xffffff, 0).setInteractive({ useHandCursor: true });
-    const title = this.makeTextObject(0, 0, label, options.fontSize ?? 18, options.textColor ?? "#f4d889");
+    const title = this.makeTextObject(0, 0, label, options.fontSize ?? 18, options.textColor ?? "#f4d889", {
+      fontFamily: options.fontFamily ?? UI_FONT,
+    });
     container.add([visual, hit, title]);
     parent.add(container);
-    hit.on("pointerover", () => redraw(hoverFill));
-    hit.on("pointerout", () => redraw(fill));
+    hit.on("pointerover", () => redraw(hoverFill, options.hoverFillAlpha ?? options.fillAlpha ?? 1, options.hoverGradient ?? options.gradient));
+    hit.on("pointerout", () => redraw(fill, options.fillAlpha ?? 1, options.gradient));
     hit.on("pointerdown", () => {
       playUiClickSound(scene);
       callback();
@@ -455,6 +531,7 @@ export class RetreatRoomPanel {
   }
 
   handleEscape() {
+    if (this.breakthroughPanel) return this.breakthroughPanel.handleEscape();
     if (this.overlayMode === "success") return true;
     if (this.overlay) {
       this.destroyOverlay();
@@ -465,11 +542,19 @@ export class RetreatRoomPanel {
   }
 
   close() {
+    this.breakthroughPanel?.close();
+    this.breakthroughPanel = null;
     this.destroyOverlay();
     if (this.cultivationService.getActiveMeditation()) this.abortCultivationRetreat({ render: false });
     else this.stopMeditationTimer();
     this.root?.destroy(true);
     this.root = null;
     this.onBack?.();
+  }
+
+  closeBreakthroughPanel(message = this.lastMessage) {
+    this.breakthroughPanel = null;
+    this.root?.setVisible(true);
+    this.renderMain(message);
   }
 }

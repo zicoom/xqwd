@@ -86,16 +86,27 @@ export class ShopService {
 
   commit(entries, mode = "buy") {
     if (!Array.isArray(entries) || entries.length === 0) return { ok: false, message: "购物清单为空。" };
+    if (mode !== "buy" && mode !== "sell") return { ok: false, message: "未知的交易类型。" };
     const items = new Map(this.listItems().map((item) => [item.id, item]));
-    const total = this.getCartTotal(entries);
+    let total = 0;
+    for (const entry of entries) {
+      const item = items.get(entry.item.id);
+      const quantity = Number(entry.quantity);
+      const available = mode === "sell" ? Number(this.player.inventory?.[item?.id]) || 0 : Number(item?.stock) || 0;
+      if (!item || !Number.isInteger(quantity) || quantity <= 0 || available < quantity) {
+        return { ok: false, message: `${entry.item?.name || "物品"} 数量已经变化，请重新选择。` };
+      }
+      // 最终价格必须从领域目录重新计算，不能相信 UI 购物车携带的价格。
+      const unitPrice = mode === "buy"
+        ? Math.max(0, Number(item.price) || 0)
+        : Math.max(1, Math.floor((Number(item.price) || 0) * 0.5));
+      total += unitPrice * quantity;
+    }
     if (mode === "buy" && (Number(this.player.spiritStones) || 0) < total) {
       return { ok: false, message: `灵石不足：需要 ${total.toLocaleString("zh-CN")}。` };
     }
-    for (const entry of entries) {
-      const item = items.get(entry.item.id);
-      const quantity = Math.max(0, Number(entry.quantity) || 0);
-      const available = mode === "sell" ? Number(this.player.inventory?.[item?.id]) || 0 : Number(item?.stock) || 0;
-      if (!item || quantity <= 0 || available < quantity) return { ok: false, message: `${entry.item.name} 数量已经变化，请重新选择。` };
+    if (mode === "sell" && (Number(this.world.merchantSpiritStones) || 0) < total) {
+      return { ok: false, message: `商人灵石不足：本次收购需要 ${total.toLocaleString("zh-CN")}。` };
     }
     this.player.inventory ||= {};
     this.world.merchantStock ||= {};
@@ -103,7 +114,7 @@ export class ShopService {
     this.world.merchantSpiritStones = Math.max(0, (Number(this.world.merchantSpiritStones) || 0) + (mode === "buy" ? total : -total));
     entries.forEach((entry) => {
       const item = items.get(entry.item.id);
-      const quantity = Math.max(0, Number(entry.quantity) || 0);
+      const quantity = Number(entry.quantity);
       this.world.merchantStock[item.id] = Math.max(0, item.stock + (mode === "buy" ? -quantity : quantity));
       this.player.inventory[item.id] = Math.max(0, (Number(this.player.inventory[item.id]) || 0) + (mode === "buy" ? quantity : -quantity));
       if (this.player.inventory[item.id] === 0) delete this.player.inventory[item.id];

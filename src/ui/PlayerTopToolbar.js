@@ -4,6 +4,7 @@ import { getCultivationProgress } from "../domain/character/CharacterProfileServ
 import { addText } from "../utils/UiHelpers.js";
 
 const PIXSO_UI_PATH = "./public/assets/images/ui/pixso-chapter-map";
+const formatRealm = (realm) => String(realm || "炼气初期").replace(/^炼气[·・]?/, "炼气·");
 
 /**
  * 预加载角色顶栏共用素材。
@@ -57,6 +58,7 @@ export class PlayerTopToolbar {
     const cultivation = getCultivationProgress(gameState.player);
     updateBar("hp", gameState.player.hp, gameState.player.maxHp, this.hpValueText);
     updateBar("cultivation", cultivation.experience, cultivation.target, this.cultivationValueText);
+    this.realmValueText?.setText(formatRealm(gameState.player.realm));
   }
 
   drawPlayerStatus() {
@@ -79,7 +81,7 @@ export class PlayerTopToolbar {
       .setOrigin(0)
       .setDisplaySize(442, 133));
     const playerNameText = this.fixed(addText(scene, 145, 44, gameState.player.name, 20, "#ffffff", { strokeThickness: 4 }));
-    this.fixed(addText(scene, playerNameText.x + playerNameText.width + 6, 49, gameState.player.realm.replace("炼气", "炼气·"), 16, "#d8caae", { strokeThickness: 3 }));
+    this.realmValueText = this.fixed(addText(scene, playerNameText.x + playerNameText.width + 6, 49, formatRealm(gameState.player.realm), 16, "#d8caae", { strokeThickness: 3 }));
     this.fixed(addText(scene, 145, 79, "生命:", 16, "#f4ead8", { strokeThickness: 3 }));
 
     const barX = 195;

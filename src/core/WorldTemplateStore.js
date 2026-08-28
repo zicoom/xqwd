@@ -64,6 +64,19 @@ export function normalizeNpc(npc = {}) {
     return Number.isFinite(number) ? number : fallback;
   };
   const rawNodes = Array.isArray(npc.dialogueTree?.nodes) ? npc.dialogueTree.nodes : [];
+  const rawQuest = npc.quest || {};
+  const questMode = ["none", "talk_reward", "task"].includes(rawQuest.mode)
+    ? rawQuest.mode
+    : (rawQuest.enabled ? "task" : "none");
+  const repeatPolicy = ["once", "if_missing", "always"].includes(rawQuest.repeatPolicy)
+    ? rawQuest.repeatPolicy
+    : "once";
+  const rewardItems = Array.isArray(rawQuest.rewardItems)
+    ? rawQuest.rewardItems.slice(0, 3).map((reward) => ({
+      itemId: String(reward?.itemId || "").trim(),
+      quantity: Math.max(1, Math.floor(Number(reward?.quantity) || 1)),
+    })).filter((reward) => reward.itemId)
+    : [];
   const usedNodeIds = new Set();
   const dialogueNodes = rawNodes.slice(0, 30).map((node, index) => {
     let id = String(node?.id || `node-${index + 1}`).trim() || `node-${index + 1}`;
@@ -77,9 +90,21 @@ export function normalizeNpc(npc = {}) {
         text: String(choice?.text ?? "").trim(),
         nextId: String(choice?.nextId ?? "").trim(),
         action: String(choice?.action ?? "").trim(),
-      })) : [],
+      })).filter((choice) => choice.text) : [],
     };
   });
+  const savedDialogueLines = Array.isArray(npc.dialogue)
+    ? npc.dialogue.map((line) => String(line ?? "").trim()).filter(Boolean).slice(0, 30)
+    : [];
+  const hasRealPlayerChoices = dialogueNodes.some((node) => node.choices.some((choice) => choice.text));
+  // 旧编辑器会把每句话建成互不相连的“回复节点”。这种资料没有真正的玩家选项，
+  // 应安全迁移成按 1、2、3 顺序播放的普通对话，否则地图中只会显示起始节点。
+  const dialogueMode = ["simple", "branch"].includes(npc.dialogueMode)
+    ? npc.dialogueMode
+    : (hasRealPlayerChoices ? "branch" : "simple");
+  const sequentialDialogueLines = savedDialogueLines.length
+    ? savedDialogueLines
+    : dialogueNodes.map((node) => node.text).filter(Boolean);
   return {
     id: npc.id || `npc-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
     isNew,
@@ -92,9 +117,12 @@ export function normalizeNpc(npc = {}) {
     mapPortraitData: npc.mapPortraitData || "",
     // 地图中的 NPC 外观沿用头像数据，保留旧字段以兼容地图编辑器与已放置 NPC。
     imageData: portraitData,
-    dialogue: Array.isArray(npc.dialogue) && npc.dialogue.length ? npc.dialogue.filter(Boolean) : (isNew ? [] : ["……"]),
+    dialogueMode,
+    dialogue: dialogueMode === "simple"
+      ? (sequentialDialogueLines.length ? sequentialDialogueLines : (isNew ? [] : ["……"]))
+      : savedDialogueLines,
     // 分支对话：每个 NPC 回复节点可挂多条主角选择，选择再跳往不同节点。
-    dialogueTree: dialogueNodes.length ? {
+    dialogueTree: dialogueMode === "branch" && dialogueNodes.length ? {
       startId: dialogueNodes.some((node) => node.id === npc.dialogueTree?.startId) ? npc.dialogueTree.startId : dialogueNodes[0].id,
       nodes: dialogueNodes,
     } : null,
@@ -121,11 +149,17 @@ export function normalizeNpc(npc = {}) {
     },
     // 即使当前 NPC 没有任务，也保留同样的数据结构，后续添加任务不用修改旧存档。
     quest: {
-      enabled: Boolean(npc.quest?.enabled),
-      title: String(npc.quest?.title || "").trim(),
-      description: String(npc.quest?.description || "").trim(),
-      target: String(npc.quest?.target || "").trim(),
-      reward: String(npc.quest?.reward || "").trim(),
+      enabled: questMode !== "none" && Boolean(rawQuest.enabled ?? true),
+      mode: questMode,
+      title: String(rawQuest.title || "").trim(),
+      description: String(rawQuest.description || "").trim(),
+      target: String(rawQuest.target || "").trim(),
+      // 旧版任务奖励文本继续保存，避免旧项目资料被新版编辑器抹掉。
+      reward: String(rawQuest.reward || "").trim(),
+      rewardItems,
+      repeatPolicy,
+      claimId: String(rawQuest.claimId || "").trim(),
+      completionQuestId: String(rawQuest.completionQuestId || "").trim(),
     },
   };
 }

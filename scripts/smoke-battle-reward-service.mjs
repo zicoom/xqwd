@@ -68,4 +68,14 @@ assert.equal(legacyState.player.inventory["wolf-pelt"], 1);
 assert.equal(legacyState.player.cultivationExp, 0);
 assert.deepEqual(legacyState.world.defeatedMonsterIds, ["legacy-monster"]);
 
+const cappedState = makeState();
+cappedState.player.cultivationExp = 995;
+cappedState.player.cultivationExpTarget = 1000;
+const cappedReward = makeService(cappedState).settleVictory({ rewards: ["修炼经验 × 12"] });
+assert.equal(cappedState.player.cultivationExp, 1000);
+assert.equal(cappedReward.cultivationExp, 5, "战斗奖励只能填满当前修为缺口");
+assert.equal(cappedReward.cultivationOverflow, 7);
+assert.equal(cappedReward.needsBreakthrough, true);
+assert.match(cappedReward.rewardText, /需要突破/);
+
 console.log("战斗奖励冒烟测试通过：解析、入账、未登记提示、章节推进和防重复结算正确。");

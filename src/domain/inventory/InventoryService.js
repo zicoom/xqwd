@@ -1,3 +1,5 @@
+import { grantCultivationExp, isCultivationFull } from "../cultivation/CultivationProgressService.js";
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const LEGACY_EFFECTS = Object.freeze({
@@ -98,23 +100,28 @@ export class InventoryService {
     const nextQi = clamp(oldQi + (effect.qi || 0), 0, Number(this.player.maxQi) || oldQi);
     const gainedHp = nextHp - oldHp;
     const gainedQi = nextQi - oldQi;
+    const canGainCultivation = effect.cultivationExp > 0 && !isCultivationFull(this.player);
     const hasOtherEffect = effect.attack || effect.defense || effect.resistance
-      || effect.resistanceType !== "无" || effect.cultivationExp || effect.skillText;
+      || effect.resistanceType !== "无" || canGainCultivation || effect.skillText;
     if (gainedHp <= 0 && gainedQi <= 0 && !hasOtherEffect) {
-      return { ok: false, consumed: false, message: "生命与修为均已圆满，无需使用" };
+      return {
+        ok: false,
+        consumed: false,
+        message: effect.cultivationExp > 0 ? "修为已达当前境界上限，需要突破后才能继续获得经验" : "生命与灵气均已圆满，无需使用",
+      };
     }
 
     this.consume(item.id);
     this.player.hp = nextHp;
     this.player.qi = nextQi;
-    this.player.cultivationExp = Math.max(0, Number(this.player.cultivationExp) || 0) + (effect.cultivationExp || 0);
+    const cultivation = grantCultivationExp(this.player, effect.cultivationExp);
     this.applyResistanceType(effect.resistanceType);
     const bonus = this.applyBonuses(effect);
     const temporaryEffect = effect.duration > 0 && Object.values(bonus).some((value) => value > 0)
       ? this.addTemporaryEffect(item, bonus, effect.duration)
       : null;
     this.applyLearnedSkill(effect.skillText);
-    const messages = this.buildUseMessages({ effect, bonus, gainedHp, gainedQi });
+    const messages = this.buildUseMessages({ effect, bonus, gainedHp, gainedQi, cultivation });
     this.save();
     return { ok: true, consumed: true, message: messages.join("，") || this.describeEffect(item), temporaryEffect };
   }
@@ -153,7 +160,7 @@ export class InventoryService {
     return effect;
   }
 
-  buildUseMessages({ effect, bonus, gainedHp, gainedQi }) {
+  buildUseMessages({ effect, bonus, gainedHp, gainedQi, cultivation }) {
     const messages = [];
     if (gainedHp > 0) messages.push(`生命 +${gainedHp}`);
     if (gainedQi > 0) messages.push(`修为 +${gainedQi}`);
@@ -161,7 +168,8 @@ export class InventoryService {
     if (bonus.defense > 0) messages.push(`防御 +${bonus.defense}`);
     if (effect.resistanceType && effect.resistanceType !== "无") messages.push(`抗性：${effect.resistanceType}`);
     else if (bonus.resistance > 0) messages.push(`抗性 +${bonus.resistance}`);
-    if (effect.cultivationExp > 0) messages.push(`修炼经验 +${effect.cultivationExp}`);
+    if (cultivation?.gained > 0) messages.push(`修炼经验 +${cultivation.gained}`);
+    if (effect.cultivationExp > 0 && cultivation?.isFull) messages.push("修为已达当前上限，需要突破");
     if (effect.skillText) messages.push("已习得技能");
     if (effect.duration > 0 && Object.values(bonus).some((value) => value > 0)) messages.push(`持续 ${effect.duration} 秒`);
     return messages;

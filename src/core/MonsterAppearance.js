@@ -9,8 +9,12 @@ export const MONSTER_APPEARANCE_MODES = Object.freeze({
  * 将来接动态立绘时只需扩展 renderer 对 animation 的处理，静态回退图仍可继续使用。
  */
 export function resolveMonsterAppearance(monster = {}) {
-  const appearance = monster.appearance && typeof monster.appearance === "object" ? monster.appearance : {};
-  const staticImageData = monster.imageData || appearance.staticFallback || "";
+  // 固定剧情敌人没有编辑器怪物模板时会显式传入 null。默认参数只能处理
+  // undefined，不能处理 null，因此这里先统一成普通空对象；固定劫修、旧档
+  // 或尚未配置立绘的怪物都安全回退到默认序列帧。
+  const source = monster && typeof monster === "object" ? monster : {};
+  const appearance = source.appearance && typeof source.appearance === "object" ? source.appearance : {};
+  const staticImageData = source.imageData || appearance.staticFallback || "";
   return {
     mode: appearance.mode === MONSTER_APPEARANCE_MODES.ANIMATED
       ? MONSTER_APPEARANCE_MODES.ANIMATED

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "control-ui-e2e": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/control-ui-e2e/SKILL.md",
+      "computedHash": "9bd1951f5bfe57e0c199b1b4cf16134195308aa9b8febb32439405c9cc7f5e65"
+    }
+  }
+}

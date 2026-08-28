@@ -1,4 +1,3 @@
-import { gameState } from "../core/GameState.js";
 import { QINGYUN_INVESTIGATION_ID } from "../domain/quests/ChapterQuestService.js";
 import { addButton, addText, playUiClickSound } from "../utils/UiHelpers.js";
 import { PlayerTopToolbar } from "./PlayerTopToolbar.js";
@@ -13,9 +12,10 @@ import { PlayerTopToolbar } from "./PlayerTopToolbar.js";
  * 本文件全部使用 1920×1080 一对一像素坐标；填写 115×115 就显示为 115×115。
  */
 export class ChapterMapHud {
-  constructor(scene, { questService } = {}) {
+  constructor(scene, { questService, explorationService } = {}) {
     this.scene = scene;
     this.questService = questService;
+    this.explorationService = explorationService;
   }
 
   /** 刷新资料栏的生命、修为数值和填充长度（供储物袋使用物品后调用）。 */
@@ -27,7 +27,14 @@ export class ChapterMapHud {
   create() {
     const scene = this.scene;
     // HUD 永远固定在屏幕上，地图镜头移动时不跟随角色滚动。
-    const fixed = (display) => display.setScrollFactor(0).setDepth(900);
+    // 固定界面创建时就立刻排除世界镜头，不能等地图场景下一次低频镜头同步。
+    // 例如小地图足迹会在角色移动中动态新增；若新对象短暂被世界镜头绘制，
+    // 它会按世界镜头的缩放出现在小地图左侧，形成一闪而过的绿色残影。
+    const fixed = (display) => {
+      display.setScrollFactor(0).setDepth(900);
+      scene.worldCamera?.ignore(display);
+      return display;
+    };
     const panelColor = 0x171d16;
     const panelStroke = 0x765b43;
 
@@ -281,6 +288,7 @@ export class ChapterMapHud {
     this.miniMapFog = scene.add.graphics()
       .setScrollFactor(0)
       .setDepth(902);
+    scene.worldCamera?.ignore(this.miniMapFog);
     this.miniMapFog.fillStyle(0x0a1711, 1);
     this.miniMapFog.fillCircle(this.miniMap.x, this.miniMap.y, this.miniMap.radius);
     // 画两道非常淡的山脊弧线，使未探索的“墨底”也像一面山水镜，而不是纯黑圆盘。
@@ -298,26 +306,25 @@ export class ChapterMapHud {
       .setStrokeStyle(1, 0xd7f5ff, 0.95)
       .setScrollFactor(0)
       .setDepth(904);
-    this.lastMiniMapRecord = null;
+    scene.worldCamera?.ignore(this.miniMapPlayerMarker);
     // 存档中已有的足迹进入地图时先画出来；否则角色没有移动时会只看到蓝点。
-    const savedPoints = Array.isArray(gameState.world.miniMapVisitedPoints) ? gameState.world.miniMapVisitedPoints : [];
+    const savedPoints = this.explorationService?.getVisitedPoints?.() || [];
     if (savedPoints.length && scene.worldSize) this.redrawMiniMapFog(savedPoints, scene.worldSize);
   }
 
   /** 每帧同步主角图标；每走约 120 像素才记录一次足迹，性能稳定且迷雾不会有断层。 */
   updateMiniMap(playerX, playerY, worldSize) {
     if (!this.miniMapExploredDots || !worldSize?.width || !worldSize?.height) return;
-    const worldPoint = { x: Math.round(playerX), y: Math.round(playerY) };
-    const visitedPoints = Array.isArray(gameState.world.miniMapVisitedPoints)
-      ? gameState.world.miniMapVisitedPoints
-      : (gameState.world.miniMapVisitedPoints = []);
-    const lastPoint = visitedPoints[visitedPoints.length - 1];
-    const shouldRecord = !lastPoint || Phaser.Math.Distance.Between(lastPoint.x, lastPoint.y, worldPoint.x, worldPoint.y) >= 120;
-    if (shouldRecord) {
-      visitedPoints.push(worldPoint);
-      // 很长时间游玩后也限制足迹数量，避免本地存档不断变大。
-      if (visitedPoints.length > 1000) visitedPoints.splice(0, visitedPoints.length - 1000);
-      this.redrawMiniMapFog(visitedPoints, worldSize);
+    const result = this.explorationService?.recordPosition?.(playerX, playerY);
+    if (result?.recorded) {
+      // 新足迹只追加一个圆点，不能每走 120 像素就销毁并重建全部足迹。
+      // 除了减少绘制开销，也避免新对象在镜头同步间隔内漏到世界画面里闪一下。
+      if (result.trimmedCount > 0) {
+        // 极长时间游玩达到容量上限后，领域服务会淘汰最旧坐标；此时才同步重画一次。
+        this.redrawMiniMapFog(this.explorationService.getVisitedPoints(), worldSize);
+      } else {
+        this.addMiniMapExploredDot(result.point, worldSize);
+      }
     }
 
     const { x: markerX, y: markerY } = this.toMiniMapPosition(playerX, playerY, worldSize);
@@ -336,18 +343,24 @@ export class ChapterMapHud {
   redrawMiniMapFog(visitedPoints, worldSize) {
     this.miniMapExploredDots.forEach((dot) => dot.destroy());
     this.miniMapExploredDots = [];
+    visitedPoints.forEach((point) => this.addMiniMapExploredDot(point, worldSize));
+  }
+
+  /** 新增单个已探索足迹，并在创建同一帧锁定为 UI 专用对象。 */
+  addMiniMapExploredDot(point, worldSize) {
     const revealRadius = 17;
-    visitedPoints.forEach((point) => {
-      const { x, y } = this.toMiniMapPosition(point.x, point.y, worldSize);
-      const distanceToCenter = Phaser.Math.Distance.Between(x, y, this.miniMap.x, this.miniMap.y);
-      // 足迹圆边缘也不能越过金圈；留出半径余量后不会遮到外层水墨卷轴。
-      if (distanceToCenter > this.miniMap.radius - revealRadius) return;
-      // 外圈是淡墨青绿，内圈是浅青色，表现“已游历的山川”而非原先的大块荧光绿。
-      this.miniMapExploredDots.push(
-        this.scene.add.circle(x, y, revealRadius, 0x385e50, 0.88).setScrollFactor(0).setDepth(903),
-        this.scene.add.circle(x, y, revealRadius * 0.62, 0x8ab59a, 0.66).setScrollFactor(0).setDepth(903),
-      );
-    });
+    const { x, y } = this.toMiniMapPosition(point.x, point.y, worldSize);
+    const distanceToCenter = Phaser.Math.Distance.Between(x, y, this.miniMap.x, this.miniMap.y);
+    // 足迹圆边缘也不能越过金圈；留出半径余量后不会遮到外层水墨卷轴。
+    if (distanceToCenter > this.miniMap.radius - revealRadius) return;
+    // 外圈是淡墨青绿，内圈是浅青色，表现“已游历的山川”而非原先的大块荧光绿。
+    const dots = [
+      this.scene.add.circle(x, y, revealRadius, 0x385e50, 0.88).setScrollFactor(0).setDepth(903),
+      this.scene.add.circle(x, y, revealRadius * 0.62, 0x8ab59a, 0.66).setScrollFactor(0).setDepth(903),
+    ];
+    // 不能依赖 VillageScene 每 250ms 的兜底同步；这一帧就禁止世界镜头绘制。
+    this.scene.worldCamera?.ignore(dots);
+    this.miniMapExploredDots.push(...dots);
   }
 
   /** 按 Pixso「任务日志」画板创建完整任务面板。 */
@@ -573,8 +586,11 @@ export class ChapterMapHud {
     this.taskLogNoDetails.setVisible(!hasTask);
     this.taskGuideButton.background.setVisible(isActive && hasTask);
     this.taskGuideButton.text.setVisible(isActive && hasTask);
-    this.taskAbandonButton.background.setVisible(isActive && hasTask);
-    this.taskAbandonButton.text.setVisible(isActive && hasTask);
+    // 已完成主线也保留一个“重新体验”入口，方便已有老档直接试玩新冒险循环，
+    // 不需要为了验证本轮玩法另建角色。
+    const canRestart = isCompleted && hasTask;
+    this.taskAbandonButton.background.setVisible((isActive || canRestart) && hasTask);
+    this.taskAbandonButton.text.setVisible((isActive || canRestart) && hasTask);
     if (!hasTask) return;
     this.taskLogCardTitle.setText(quest.title);
     this.taskLogMainTitle.setText(quest.title);
@@ -586,9 +602,14 @@ export class ChapterMapHud {
     this.taskLogReward.setText(quest.rewardLabel);
     this.taskLogIssuerName.setText(quest.issuer);
     this.taskLogRecipientName.setText(quest.recipient);
+    this.taskAbandonButton.text.setText(canRestart ? "重新体验" : "放弃任务");
   }
 
   abandonCurrentQuest() {
+    if (this.questService?.isCompleted(QINGYUN_INVESTIGATION_ID)) {
+      this.scene.restartQingyunQuest?.();
+      return;
+    }
     const result = this.questService?.abandonQuest(QINGYUN_INVESTIGATION_ID);
     if (!result?.ok) return;
     playUiClickSound(this.scene);

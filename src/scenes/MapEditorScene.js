@@ -82,6 +82,19 @@ export class MapEditorScene extends Phaser.Scene {
   fitZoom() { return Math.min(MAP_VIEW_WIDTH / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
   coverZoom() { return Math.max(MAP_VIEW_WIDTH / this.mapConfig.worldWidth, 1080 / this.mapConfig.worldHeight); }
 
+  /**
+   * 编辑器世界对象的显示层级。
+   *
+   * 建筑图片通常覆盖面积很大，若所有对象只按 Y 坐标排序，建筑图片的非透明像素就会把
+   * NPC 遮住。这里把 NPC 放入最高的世界对象层级；其他对象仍保留脚底 Y 坐标带来的
+   * 细微排序，因此同类型对象前后移动时不会失去自然的遮挡关系。
+   */
+  markerDepth(object) {
+    const depthByType = { building: 6, npc: 12 };
+    const baseDepth = depthByType[object?.type] ?? 8;
+    return baseDepth + (Number(object?.y) || 0) / 100000;
+  }
+
   loadMap(mapId, remember = true) {
     if (remember && this.mapObjects) this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
     if (remember) this.clearPendingTemplateSelection();
@@ -444,9 +457,12 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   objectAt(x, y) {
-    // 后放置的对象视觉层级更靠前，命中时也应优先选择它。
-    for (let index = this.mapObjects.length - 1; index >= 0; index -= 1) {
-      const object = this.mapObjects[index];
+    // 命中顺序必须与实际显示层级一致：NPC 显示在建筑上方时，点击重叠区域也应先选中 NPC。
+    // 深度相同时仍优先选择后放置的对象，保持原有编辑习惯。
+    const objectsFrontToBack = this.mapObjects
+      .map((object, index) => ({ object, index }))
+      .sort((left, right) => this.markerDepth(right.object) - this.markerDepth(left.object) || right.index - left.index);
+    for (const { object, index } of objectsFrontToBack) {
       const instanceScale = Number(object.scale) || 1;
       if (object.type === "building") {
         const template = this.buildings.find((item) => item.id === object.buildingTemplateId);
@@ -469,7 +485,8 @@ export class MapEditorScene extends Phaser.Scene {
   renderMarker(object) {
     const info = MAP_OBJECT_TYPES[object.type] || MAP_OBJECT_TYPES.npc;
     const instanceScale = Number(object.scale) || 1;
-    const marker = this.add.container(object.x, object.y).setDepth(8 + object.y / 100000);
+    // 整个容器一起提层，确保 NPC 立绘、名称和选中标记都不会被建筑图片覆盖。
+    const marker = this.add.container(object.x, object.y).setDepth(this.markerDepth(object));
     const selected = object.id === this.selectedObjectId;
     const ring = this.add.circle(0, -5 * instanceScale, 48, 0xffdc55, selected ? 0.16 : 0).setStrokeStyle(selected ? 3 : 0, 0xffd54d).setScale(instanceScale);
     const shadow = this.add.ellipse(0, 5 * instanceScale, 48, 13, 0x17221e, 0.35).setScale(instanceScale);
@@ -583,7 +600,7 @@ export class MapEditorScene extends Phaser.Scene {
       object.y = Math.round(Phaser.Math.Clamp(world.y + this.dragOffset.y, 0, this.mapConfig.worldHeight));
       this.dragHasMoved = this.dragHasMoved
         || Phaser.Math.Distance.Between(object.x, object.y, this.dragStartPosition.x, this.dragStartPosition.y) > 3;
-      this.markers.get(object.id)?.setPosition(object.x, object.y).setDepth(8 + object.y / 100000);
+      this.markers.get(object.id)?.setPosition(object.x, object.y).setDepth(this.markerDepth(object));
       return;
     }
     if (!this.panning || !pointer.middleButtonDown()) return;

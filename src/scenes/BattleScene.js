@@ -7,9 +7,24 @@ import { SpellService } from "../domain/spells/SpellService.js";
 import { CombatEngine, calculatePlayerInitiative } from "../domain/combat/CombatEngine.js";
 import { BattleRewardService } from "../domain/rewards/BattleRewardService.js";
 import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
+import {
+  ChapterQuestService,
+  QINGYUN_INVESTIGATION_ID,
+  QUEST_EVENTS,
+} from "../domain/quests/ChapterQuestService.js";
 
 const CHAPTER_ELITE_REWARDS = ["灵石 × 12", "低阶回灵丹 × 1", "蚀月盟令牌残片 × 1"];
 const DEFAULT_MONSTER_REWARDS = ["灵石 × 3", "低阶材料 × 1"];
+const ADVENTURE_BATTLES = Object.freeze({
+  "qingyun-mist-guardian": {
+    name: "雾隐山魈",
+    maxHp: 38,
+    attack: 7,
+    defense: 1,
+    qi: 14,
+    skills: [{ name: "雾爪扑击", damage: 6, qiCost: 0, cooldown: 0 }],
+  },
+});
 
 /**
  * 第一章基础回合战斗。
@@ -24,6 +39,7 @@ export class BattleScene extends Phaser.Scene {
    */
   init(data = {}) {
     this.mapMonster = data.mapMonster || null;
+    this.adventureBattle = ADVENTURE_BATTLES[data.adventureBattle] ? data.adventureBattle : null;
     // 从奇异玉光进入的测试战斗允许随时返回，而且返回后恢复状态，方便反复测试。
     this.isTestBattle = Boolean(data.testBattle);
   }
@@ -53,13 +69,14 @@ export class BattleScene extends Phaser.Scene {
       catalog: this.itemCatalog,
       save: saveFirstChapterProgress,
     });
-    const config = this.mapMonster?.battle;
+    const adventureConfig = this.adventureBattle ? ADVENTURE_BATTLES[this.adventureBattle] : null;
+    const config = this.mapMonster?.battle || adventureConfig;
     // 编辑器怪物若上传了图片，就在本场战斗使用该图片；
     // 没上传时继续使用默认噬魂魔蛛的 153 帧动作，保证旧内容不受影响。
     this.usesCustomEnemyPortrait = Boolean(resolveMonsterAppearance(config).staticImageData);
     this.enemy = config
       ? {
-        name: this.mapMonster.name,
+        name: this.mapMonster?.name || adventureConfig.name,
         hp: config.maxHp,
         maxHp: config.maxHp,
         attack: config.attack,
@@ -473,6 +490,30 @@ export class BattleScene extends Phaser.Scene {
     if (this.isTestBattle) {
       this.combat.restorePlayer();
       this.setLog(`${this.enemy.name}被击败；测试战斗不结算奖励。\n2 秒后返回青云山。`, "#87642d");
+      this.updateBattleUi();
+      this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
+      return;
+    }
+
+    // 第一章岔路的风险路线：胜利先由章节领域确认，奖励再通过既有结算服务入账。
+    // 使用稳定怪物 ID，刷新或重复进入战斗也不会重复给星萤果与灵石。
+    if (this.adventureBattle === "qingyun-mist-guardian") {
+      const questService = new ChapterQuestService({
+        chapter: gameState.chapter,
+        player: gameState.player,
+        save: saveFirstChapterProgress,
+      });
+      const progress = questService.advanceQuest(
+        QINGYUN_INVESTIGATION_ID,
+        QUEST_EVENTS.MIST_GUARDIAN_DEFEATED,
+      );
+      const result = progress.ok
+        ? this.rewardService.settleVictory({
+          monsterId: "chapter-1-mist-guardian",
+          rewards: ["灵石 × 12", "星萤果 × 1"],
+        })
+        : { rewardText: "主线进度未改变" };
+      this.setLog(`雾隐山魈消散，异光重现。获得：${result.rewardText || result.message}。\n2 秒后返回青云山。`, "#87642d");
       this.updateBattleUi();
       this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
       return;

@@ -1,4 +1,5 @@
 import { getRetreatDurations } from "../../core/RetreatCatalog.js";
+import { grantCultivationExp, isCultivationFull } from "./CultivationProgressService.js";
 
 const asRecord = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -63,6 +64,9 @@ export class CultivationRetreatService {
 
   beginMeditation(months, nowMs = Date.now()) {
     if (this.activeMeditation) return { ok: false, message: "已经在清修闭关中。" };
+    if (isCultivationFull(this.player)) {
+      return { ok: false, message: "修为已达当前境界上限，需要突破后才能继续清修。" };
+    }
     const plan = this.getPlan(months);
     if (!plan) return { ok: false, message: "闭关时长无效。" };
     // 开始行为显式建立闭关进度容器，旧档和空世界对象都能得到一致结构。
@@ -72,6 +76,7 @@ export class CultivationRetreatService {
       plan,
       elapsedMs: 0,
       gainedExp: 0,
+      processedExp: 0,
       lastTickAt: now,
       lastSavedElapsedMs: 0,
     };
@@ -95,10 +100,23 @@ export class CultivationRetreatService {
 
     const progress = session.elapsedMs / session.plan.durationMs;
     const targetExp = Math.floor(session.plan.totalExp * progress);
-    const gainedNow = Math.max(0, targetExp - session.gainedExp);
-    if (gainedNow > 0) {
-      this.player.cultivationExp = Math.max(0, Number(this.player.cultivationExp) || 0) + gainedNow;
-      session.gainedExp += gainedNow;
+    const requestedNow = Math.max(0, targetExp - session.processedExp);
+    session.processedExp += requestedNow;
+    const cultivation = grantCultivationExp(this.player, requestedNow);
+    session.gainedExp += cultivation.gained;
+
+    // 中途抵达瓶颈时立即结束本次清修；已获得的修为保留，但不再消耗时间空转。
+    if (cultivation.reachedCap && session.elapsedMs < session.plan.durationMs) {
+      const status = this.buildStatus(session);
+      this.activeMeditation = null;
+      this.save();
+      return {
+        ...status,
+        active: false,
+        capped: true,
+        gainedNow: cultivation.gained,
+        message: `修为已达 ${cultivation.target} 上限，需要突破。本次清修所得修为 +${session.gainedExp}。`,
+      };
     }
 
     const completed = session.elapsedMs >= session.plan.durationMs;
@@ -112,7 +130,9 @@ export class CultivationRetreatService {
       this.save();
       return {
         ...status,
-        message: `闭关圆满，历时${session.plan.label}，修为 +${session.gainedExp}。`,
+        gainedNow: cultivation.gained,
+        needsBreakthrough: cultivation.isFull,
+        message: `闭关圆满，历时${session.plan.label}，修为 +${session.gainedExp}。${cultivation.isFull ? "已达当前上限，需要突破。" : ""}`,
       };
     }
 
@@ -120,7 +140,7 @@ export class CultivationRetreatService {
       session.lastSavedElapsedMs = session.elapsedMs;
       this.save();
     }
-    return { ...this.buildStatus(session), gainedNow };
+    return { ...this.buildStatus(session), gainedNow: cultivation.gained, needsBreakthrough: cultivation.isFull };
   }
 
   abortMeditation() {

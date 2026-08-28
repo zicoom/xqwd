@@ -1,4 +1,5 @@
 import { RewardCatalog, parseRewardText } from "./RewardCatalog.js";
+import { grantCultivationExp } from "../cultivation/CultivationProgressService.js";
 
 export { parseRewardText } from "./RewardCatalog.js";
 
@@ -66,7 +67,7 @@ export class BattleRewardService {
     }
 
     this.player.spiritStones = toQuantity(this.player.spiritStones) + spiritStones;
-    this.player.cultivationExp = toQuantity(this.player.cultivationExp) + cultivationExp;
+    const cultivation = grantCultivationExp(this.player, cultivationExp);
     if (monsterId) defeatedIds.push(monsterId);
     if (chapterElite) this.chapter.eliteDefeated = true;
     const saved = this.save() !== false;
@@ -78,13 +79,26 @@ export class BattleRewardService {
       granted,
       unresolved,
       spiritStones,
-      cultivationExp,
-      rewardText: this.formatResult(granted, unresolved),
+      cultivationExp: cultivation.gained,
+      cultivationOverflow: cultivation.overflow,
+      needsBreakthrough: cultivationExp > 0 && cultivation.isFull,
+      rewardText: this.formatResult(granted, unresolved, cultivation),
     };
   }
 
-  formatResult(granted, unresolved) {
-    const received = granted.map(({ name, quantity }) => `${name} × ${quantity}`);
+  formatResult(granted, unresolved, cultivation = null) {
+    let hasExperience = false;
+    const received = granted.flatMap(({ kind, name, quantity }) => {
+      if (kind === "experience") {
+        hasExperience = true;
+        return [];
+      }
+      return `${name} × ${quantity}`;
+    });
+    if (hasExperience) {
+      received.push(cultivation?.gained > 0 ? `修炼经验 +${cultivation.gained}` : "修为已达当前上限，经验未吸收");
+      if (cultivation?.reachedCap) received.push("需要突破后才能继续修炼");
+    }
     const missing = unresolved.map(({ name, quantity }) => `${name} × ${quantity}（未登记，未入包）`);
     return [...received, ...missing].join("、") || "无";
   }

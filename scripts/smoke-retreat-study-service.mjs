@@ -85,4 +85,13 @@ assert.equal(timedResult.ok, true);
 assert.deepEqual(timedContext.player.learnedTechniques, ["technique-huoqiu"]);
 assert.equal(timedContext.service.completeTimedStudy().ok, false, "定时学习结果不能重复结算");
 
+const cappedContext = createContext();
+cappedContext.player.cultivationExp = 990;
+cappedContext.player.cultivationExpTarget = 1000;
+assert.equal(cappedContext.service.beginStudy("study-qingxin-jue", 12).ok, true);
+const cappedStudy = cappedContext.service.completeStudy({ ok: true, score: 82, grade: "入定", expMultiplier: 1.15, forcedFailure: false });
+assert.equal(cappedStudy.gainedExp, 10, "秘籍领悟的修为奖励只能填满剩余差值");
+assert.equal(cappedContext.player.cultivationExp, 1000);
+assert.match(cappedStudy.message, /需要突破/);
+
 console.log("smoke-retreat-study-service: ok");
