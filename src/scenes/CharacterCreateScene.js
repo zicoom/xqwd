@@ -1,13 +1,12 @@
 import {
-  FIVE_ELEMENTS,
   gameState,
-  getHighestElement,
   prepareNewCharacter,
   saveFirstChapterProgress
 } from "../core/GameState.js";
 import { SceneKeys } from "../core/SceneKeys.js";
 import { configureFullHdScene } from "../core/DisplayConfig.js";
 import { DEFAULT_PLAYER_PORTRAIT_ID, getPlayerPortrait, PLAYER_PORTRAITS } from "../core/PortraitCatalog.js";
+import { CharacterCreationService, FIVE_ELEMENTS } from "../domain/character/CharacterCreationService.js";
 import { addText, playUiClickSound } from "../utils/UiHelpers.js";
 
 /**
@@ -28,10 +27,14 @@ export class CharacterCreateScene extends Phaser.Scene {
     configureFullHdScene(this);
     if (this.isCreatingNewCharacter) prepareNewCharacter(this.slotIndex);
 
-    this.remainingPoints = 10;
     this.rootTexts = {};
     this.genderButtonBackgrounds = {};
-    gameState.player.portraitId ||= DEFAULT_PLAYER_PORTRAIT_ID;
+    this.creationService = new CharacterCreationService({
+      player: gameState.player,
+      portraits: PLAYER_PORTRAITS,
+      defaultPortraitId: DEFAULT_PLAYER_PORTRAIT_ID,
+    });
+    this.remainingPoints = this.creationService.getRemainingPoints();
     this.portraitSelectionIndex = Math.max(0, PLAYER_PORTRAITS.findIndex((portrait) => portrait.id === gameState.player.portraitId));
 
     this.add.image(960, 540, "xuanqiong-wendao-cover").setDisplaySize(1920, 1080);
@@ -239,8 +242,8 @@ export class CharacterCreateScene extends Phaser.Scene {
 
   confirmPortraitSelection() {
     const portrait = PLAYER_PORTRAITS[this.portraitSelectionIndex];
-    gameState.player.portraitId = portrait.id;
-    gameState.player.gender = portrait.gender;
+    const result = this.creationService.selectPortrait(portrait.id);
+    if (!result.ok) return;
     this.refreshGenderSelection();
     this.drawPortraitPreview();
     this.closePortraitPicker();
@@ -301,7 +304,7 @@ export class CharacterCreateScene extends Phaser.Scene {
     this.add.rectangle(1576, 544, 228, 58, 0x251f18, 0.98)
       .setStrokeStyle(1, 0x806737, 0.95).setDepth(4);
     addText(this, 1576, 528, "剩余可分配点", 14, "#bdb08c").setOrigin(0.5).setDepth(5);
-    this.remainingText = addText(this, 1576, 554, "10 / 10", 22, "#f5d98d", {
+    this.remainingText = addText(this, 1576, 554, `${this.remainingPoints} / 10`, 22, "#f5d98d", {
       fontStyle: "bold"
     }).setOrigin(0.5).setDepth(5);
 
@@ -318,7 +321,7 @@ export class CharacterCreateScene extends Phaser.Scene {
     this.add.circle(814, y, 17, color, 0.2).setStrokeStyle(1, color, 0.92).setDepth(4);
     addText(this, 814, y, element, 18, "#f5e2ac", { fontStyle: "bold" }).setOrigin(0.5).setDepth(5);
     addText(this, 850, y, `${element}灵根`, 18, "#e7d8b0").setOrigin(0, 0.5).setDepth(5);
-    const value = addText(this, 1300, y, "0", 22, "#fff0c2", { fontStyle: "bold" })
+    const value = addText(this, 1300, y, String(gameState.player.roots[element]), 22, "#fff0c2", { fontStyle: "bold" })
       .setOrigin(0.5).setDepth(5);
     this.rootTexts[element] = value;
     this.createStepButton(1410, y, "−", () => this.changeRoot(element, -1));
@@ -372,51 +375,45 @@ export class CharacterCreateScene extends Phaser.Scene {
 
   askName() {
     const name = window.prompt("请输入角色名字（最多 8 个字）", gameState.player.name);
-    if (name && name.trim()) {
-      gameState.player.name = name.trim().slice(0, 8);
-      this.nameText.setText(gameState.player.name);
-      this.showMessage("道号已更新。");
-    }
+    if (name === null) return;
+    const result = this.creationService.setName(name);
+    if (!result.ok) return this.showMessage("道号不能为空。");
+    this.nameText.setText(result.name);
+    this.showMessage("道号已更新。");
   }
 
   setGender(gender) {
-    gameState.player.gender = gender;
-    const currentPortrait = getPlayerPortrait(gameState.player.portraitId);
-    if (currentPortrait.gender !== gender) {
-      gameState.player.portraitId = PLAYER_PORTRAITS.find((portrait) => portrait.gender === gender)?.id
-        ?? currentPortrait.id;
-    }
+    const result = this.creationService.setGender(gender);
+    if (!result.ok) return;
     this.refreshGenderSelection();
     this.drawPortraitPreview();
   }
 
   changeRoot(element, delta) {
-    const current = gameState.player.roots[element];
-    if (delta > 0 && this.remainingPoints <= 0) {
+    const result = this.creationService.changeRoot(element, delta);
+    if (!result.ok && result.reason === "no-points") {
       this.showMessage("灵根潜能已全部分配。");
       return;
     }
-    if (delta < 0 && current <= 0) return;
-    gameState.player.roots[element] += delta;
-    this.remainingPoints -= delta;
-    this.rootTexts[element].setText(String(gameState.player.roots[element]));
+    if (!result.ok) return;
+    this.remainingPoints = result.remaining;
+    this.rootTexts[element].setText(String(result.value));
     this.remainingText.setText(`${this.remainingPoints} / 10`);
     this.skillTip.setText(`初始技能：${this.getSkillName()}`);
   }
 
   getSkillName() {
-    const highest = getHighestElement(gameState.player.roots);
-    const mapping = { 金: "金刃诀", 木: "回春术", 水: "清心诀", 火: "火球术", 土: "土甲术" };
-    return `将根据最高灵根属性「${highest}」学习 ${mapping[highest]}`;
+    const preview = this.creationService.getSkillPreview();
+    return `将根据最高灵根属性「${preview.element}」学习 ${preview.skillName}`;
   }
 
   enterVillage() {
-    if (this.remainingPoints !== 0) {
-      this.showMessage(`还需分配 ${this.remainingPoints} 点灵根潜能。`);
+    const result = this.creationService.confirm();
+    if (!result.ok) {
+      const remaining = Math.max(0, result.remaining);
+      this.showMessage(remaining > 0 ? `还需分配 ${remaining} 点灵根潜能。` : "灵根点数不符合创建规则。");
       return;
     }
-    gameState.player.selectedElement = getHighestElement(gameState.player.roots);
-    gameState.player.attack = 8 + gameState.player.roots[gameState.player.selectedElement] * 2;
     saveFirstChapterProgress();
     this.scene.start(SceneKeys.VILLAGE);
   }

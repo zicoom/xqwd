@@ -12,6 +12,7 @@
     "test:shortcut": "node scripts/smoke-combat-shortcut-service.mjs",
     "test:archive": "node scripts/smoke-save-archive-service.mjs",
     "test:profile": "node scripts/smoke-character-profile-service.mjs",
+    "test:character-create": "node scripts/smoke-character-creation-service.mjs",
     "test:cultivation-progress": "node scripts/smoke-cultivation-progress-service.mjs",
     "test:cultivation-breakthrough": "node scripts/smoke-cultivation-breakthrough-service.mjs",
     "test:shop": "node scripts/smoke-shop-service.mjs",
@@ -32,6 +33,6 @@
     "test:combat": "node scripts/smoke-combat-engine.mjs",
     "test:reward": "node scripts/smoke-battle-reward-service.mjs",
     "test:save": "node scripts/smoke-save-migrations.mjs",
-    "test": "npm run check:architecture && npm run test:quest && npm run test:npc-interaction && npm run test:npc-dialogue && npm run test:transfer && npm run test:artifact && npm run test:shortcut && npm run test:archive && npm run test:profile && npm run test:cultivation-progress && npm run test:cultivation-breakthrough && npm run test:shop && npm run test:building && npm run test:building-collision && npm run test:map-exploration && npm run test:sect && npm run test:scene-resume && npm run test:alchemy && npm run test:alchemy-minigame && npm run test:retreat && npm run test:cultivation-retreat && npm run test:retreat-minigame && npm run test:editor-files && npm run test:map-content && npm run test:monster-appearance && npm run test:combat && npm run test:reward && npm run test:save"
+    "test": "npm run check:architecture && npm run test:quest && npm run test:npc-interaction && npm run test:npc-dialogue && npm run test:transfer && npm run test:artifact && npm run test:shortcut && npm run test:archive && npm run test:profile && npm run test:character-create && npm run test:cultivation-progress && npm run test:cultivation-breakthrough && npm run test:shop && npm run test:building && npm run test:building-collision && npm run test:map-exploration && npm run test:sect && npm run test:scene-resume && npm run test:alchemy && npm run test:alchemy-minigame && npm run test:retreat && npm run test:cultivation-retreat && npm run test:retreat-minigame && npm run test:editor-files && npm run test:map-content && npm run test:monster-appearance && npm run test:combat && npm run test:reward && npm run test:save"
   }
 }

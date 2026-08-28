@@ -100,6 +100,17 @@ for (const file of collectJavaScriptFiles(sourceRoot)) {
       failures.push(`${relativePath}: 大地图场景必须通过 MapExplorationService 记录探索足迹`);
     }
   }
+  if (relativePath === "src/scenes/CharacterCreateScene.js") {
+    if (!/from\s+["'][^"']*\/domain\/character\/CharacterCreationService\.js["']/.test(executableSource)) {
+      failures.push(`${relativePath}: 角色创建场景必须通过 CharacterCreationService 执行创建规则`);
+    }
+    if (/gameState\.player\.(?:name|gender|portraitId|selectedElement|attack)\s*=/.test(executableSource)) {
+      failures.push(`${relativePath}: 角色创建场景不能直接修改姓名、性别、立绘或初始战斗属性`);
+    }
+    if (/gameState\.player\.roots\s*\[[^\]]+\]\s*(?:=|\+=|-=|\+\+|--)/.test(executableSource)) {
+      failures.push(`${relativePath}: 角色创建场景不能直接修改灵根点数`);
+    }
+  }
   if (relativePath === "src/scenes/ChapterResultScene.js") {
     if (!/from\s+["'][^"']*\/domain\/quests\/ChapterQuestService\.js["']/.test(executableSource)) {
       failures.push(`${relativePath}: 章节重玩必须通过 ChapterQuestService 统一重置状态`);

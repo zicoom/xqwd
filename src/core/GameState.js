@@ -87,19 +87,6 @@ export function getSaveStorageStatus() {
   return { writable: !saveWriteBlockReason, reason: saveWriteBlockReason };
 }
 
-/** 五行名称固定放在这里，后续加风、雷、冰、魔、神时只需扩充这份常量。 */
-export const FIVE_ELEMENTS = ["金", "木", "水", "火", "土"];
-
-/**
- * 根据当前加点找出最高属性。
- * 如果出现并列，返回第一个并列属性；创建界面会让玩家手动确认初始技能属性。
- */
-export function getHighestElement() {
-  return FIVE_ELEMENTS.reduce((best, element) =>
-    gameState.player.roots[element] > gameState.player.roots[best] ? element : best,
-  FIVE_ELEMENTS[0]);
-}
-
 /**
  * 保存第一章原型进度。
  * localStorage 相当于浏览器自带的小型储物柜：刷新网页后内容仍然存在。
