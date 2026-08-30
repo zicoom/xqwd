@@ -1,5 +1,6 @@
 import { gameState, saveFirstChapterProgress } from "../../core/GameState.js";
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from "../../core/DisplayConfig.js";
+import { getPlayerPortrait } from "../../core/PortraitCatalog.js";
 import { ItemCatalog } from "../../domain/items/ItemCatalog.js";
 import { InventoryService } from "../../domain/inventory/InventoryService.js";
 import { TechniqueLoadoutService } from "../../domain/techniques/TechniqueLoadoutService.js";
@@ -21,6 +22,44 @@ const AVAILABLE_TABS = Object.freeze(["属性", "储物袋", "法宝", "法术",
 const NAV_SLOT_WIDTH = 180;
 const NAV_FIRST_CENTER_X = 320;
 const NAV_LABELS = Object.freeze(["属性", "储物袋", "法宝", "法术", "功法", "社交", "存档"]);
+
+const CHARACTER_MENU_ASSETS = Object.freeze([
+  ["system-item-sect-tianjian-token", "./public/assets/images/items/tianjian-token.svg"],
+  ["storage-background", "./public/assets/images/ui/storage/storage-background.png"],
+  ["storage-bag-frame", "./public/assets/images/ui/storage/storage-bag-frame.png"],
+  ["storage-category", "./public/assets/images/ui/storage/storage-category.png"],
+  ["storage-category-selected", "./public/assets/images/ui/storage/storage-category-selected.png"],
+  ["storage-grade-option", "./public/assets/images/ui/storage/storage-grade-option.png"],
+  ["storage-grade-option-selected", "./public/assets/images/ui/storage/storage-grade-option-selected.png"],
+  ["storage-grade-arrow", "./public/assets/images/ui/storage/storage-grade-arrow.png"],
+  ["storage-grade-arrow-selected", "./public/assets/images/ui/storage/storage-grade-arrow-selected.png"],
+  ["storage-action-use", "./public/assets/images/ui/storage/storage-action-use.png"],
+  ["storage-action-detail", "./public/assets/images/ui/storage/storage-action-detail.png"],
+  ["storage-action-discard", "./public/assets/images/ui/storage/storage-action-discard.png"],
+  ["artifact-frame", "./public/assets/images/ui/artifact/artifact-frame.png"],
+  ["artifact-category-label", "./public/assets/images/ui/artifact/artifact-category-label.png"],
+  ["combat-shortcut-label", "./public/assets/images/ui/spells/combat-shortcut-label.png"],
+  ["merchant-spirit-stone", "./public/assets/images/merchant/spirit-stone.png"],
+  ...[
+    "baixiangye", "juqicao", "xingyingguo", "ninglutai", "linggugen",
+    "yuyazhi", "qingmaiteng", "yuelulan", "qinglinghua", "chiyangshen",
+  ].map((id) => [`merchant-herb-${id}`, `./public/assets/images/merchant/herb-${id}.png`]),
+]);
+
+/**
+ * 角色菜单会在大地图、门派及后续独立玩法场景中复用；各场景统一调用这里登记显示资源，
+ * 避免某个入口能打开页面、刷新后却因场景没有预加载背包或法宝素材而显示空白。
+ */
+export function preloadCharacterMenuAssets(scene, itemTemplates = []) {
+  const queueImage = (key, path) => {
+    if (!key || !path || scene.textures.exists(key)) return;
+    scene.load.image(key, path);
+  };
+  CHARACTER_MENU_ASSETS.forEach(([key, path]) => queueImage(key, path));
+  itemTemplates
+    .filter((item) => item?.id && item?.imageData)
+    .forEach((item) => queueImage(`item-custom-${item.id}`, item.imageData));
+}
 
 /**
  * 角色菜单公共外壳。
@@ -55,6 +94,8 @@ export class CharacterMenuPanel {
       save: saveFirstChapterProgress,
     });
     this.saveArchiveService = services.saveArchiveService || scene.saveArchiveService;
+    this.beforeSave = services.beforeSave || (() => scene.rememberPlayerPosition?.());
+    this.onLoaded = services.onLoaded || (() => scene.scene.restart());
     this.profileService = services.profileService || new CharacterProfileService({
       player: gameState.player,
       catalog: this.catalog,
@@ -72,6 +113,7 @@ export class CharacterMenuPanel {
 
   create() {
     const scene = this.scene;
+    const portraitTextureKey = getPlayerPortrait(gameState.player.portraitId).textureKey;
     const panel = scene.add.container(0, 0).setScrollFactor(0).setDepth(2050).setVisible(false);
     panel.setSize(SCREEN_WIDTH, SCREEN_HEIGHT).setInteractive({ useHandCursor: false });
     panel.add(scene.add.image(960, 540, "storage-background").setDisplaySize(SCREEN_WIDTH, SCREEN_HEIGHT));
@@ -114,12 +156,14 @@ export class CharacterMenuPanel {
       scene,
       parent: panel,
       profileService: this.profileService,
+      portraitTextureKey,
     });
     this.attributePage.create();
     this.storagePage = new StorageBagPanel(scene, {
       parent: panel,
       catalog: this.catalog,
       inventoryService: this.inventoryService,
+      portraitTextureKey,
     });
     this.storagePage.create();
     this.artifactPage = new ArtifactPanel({
@@ -146,8 +190,8 @@ export class CharacterMenuPanel {
       scene,
       parent: panel,
       saveArchiveService: this.saveArchiveService,
-      beforeSave: () => scene.rememberPlayerPosition(),
-      onLoaded: () => scene.scene.restart(),
+      beforeSave: this.beforeSave,
+      onLoaded: this.onLoaded,
     });
     this.savePage.create();
 

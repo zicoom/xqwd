@@ -41,6 +41,37 @@ export function rememberSectRoute({ sectId, featureId = "", saveSlot = null } = 
   }
 }
 
+/**
+ * 记录当前标签页正在进行的战斗来源。
+ * 这里只保存可稳定重建战斗的编号，不保存整只怪物、图片或即时血量，避免会话记录膨胀。
+ */
+export function rememberBattleRoute({
+  saveSlot = null,
+  testBattle = false,
+  adventureBattle = "",
+  mapId = "",
+  mapMonsterId = "",
+  monsterTemplateId = "",
+} = {}, storage = getDefaultStorage()) {
+  if (!storage?.setItem) return false;
+  const route = {
+    version: CURRENT_VERSION,
+    kind: "battle",
+    saveSlot: normalizeSaveSlot(saveSlot),
+    testBattle: Boolean(testBattle),
+    adventureBattle: normalizeStableId(adventureBattle),
+    mapId: normalizeStableId(mapId),
+    mapMonsterId: normalizeStableId(mapMonsterId),
+    monsterTemplateId: normalizeStableId(monsterTemplateId),
+  };
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(route));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 读取当前标签页的门派恢复位置；无效、损坏或属于其他角色档位时返回 null。 */
 export function getSectResumeRoute(saveSlot = null, storage = getDefaultStorage()) {
   if (!storage?.getItem) return null;
@@ -65,7 +96,33 @@ export function getSectResumeRoute(saveSlot = null, storage = getDefaultStorage(
   }
 }
 
-/** 离开门派回到大地图后清除恢复位置。 */
+/** 读取当前标签页的战斗来源；刷新后会从该场战斗开头安全重建。 */
+export function getBattleResumeRoute(saveSlot = null, storage = getDefaultStorage()) {
+  if (!storage?.getItem) return null;
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const route = JSON.parse(raw);
+    const normalizedSlot = normalizeSaveSlot(saveSlot);
+    if (
+      route?.version !== CURRENT_VERSION ||
+      route?.kind !== "battle" ||
+      normalizeSaveSlot(route.saveSlot) !== normalizedSlot
+    ) return null;
+    return {
+      resumeBattle: true,
+      testBattle: Boolean(route.testBattle),
+      adventureBattle: normalizeStableId(route.adventureBattle),
+      mapId: normalizeStableId(route.mapId),
+      mapMonsterId: normalizeStableId(route.mapMonsterId),
+      monsterTemplateId: normalizeStableId(route.monsterTemplateId),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 离开可恢复页面或结束战斗后清除恢复位置。 */
 export function clearSceneResumeRoute(storage = getDefaultStorage()) {
   if (!storage?.removeItem) return false;
   try {

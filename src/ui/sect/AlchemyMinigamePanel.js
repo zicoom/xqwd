@@ -1,12 +1,66 @@
-import { addButton, addText } from "../../utils/UiHelpers.js";
+import { addText } from "../../utils/UiHelpers.js";
+import { AlchemyResultPanel } from "./AlchemyResultPanel.js";
 
-const GAUGE_LEFT = 470;
-const GAUGE_WIDTH = 980;
-const GAUGE_Y = 830;
+const TITLE_FONT = '"SJ yuantijian-C", "Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
+const LABEL_FONT = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
+const BODY_FONT = '"Noto Sans SC Battle Popup", "Noto Sans SC", "Microsoft YaHei", sans-serif';
+const CAPTION_FONT = '"SJ yuantijian-Z", "Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
+
+const ASSET_ROOT = "./public/assets/images/pixso/alchemy/minigame";
+const ASSETS = Object.freeze({
+  background: ["pixso-alchemy-minigame-background", "background.jpg"],
+  phaseSeal: ["pixso-alchemy-minigame-phase-seal", "phase-seal.png"],
+  phaseCard: ["pixso-alchemy-minigame-phase-card", "phase-card.png"],
+  stabilityWarm: ["pixso-alchemy-minigame-stability-warm", "stability-row-warm.png"],
+  stabilityInfuse: ["pixso-alchemy-minigame-stability-infuse", "stability-row-infuse.png"],
+  stabilityCondense: ["pixso-alchemy-minigame-stability-condense", "stability-row-condense.png"],
+  temperatureTrack: ["pixso-alchemy-minigame-temperature-track", "temperature-track.png"],
+  stabilityRing: ["pixso-alchemy-minigame-stability-ring", "stability-ring.png"],
+  stabilityPanel: ["pixso-alchemy-minigame-stability-panel", "stability-panel.png"],
+  cauldronStage: ["pixso-alchemy-minigame-cauldron-stage", "cauldron-stage.png"],
+  stagePanel: ["pixso-alchemy-minigame-stage-panel", "stage-panel.png"],
+  condenseButton: ["pixso-alchemy-minigame-condense-button", "condense-button-disabled.png"],
+  heatButton: ["pixso-alchemy-minigame-heat-button", "heat-button.png"],
+  abortButton: ["pixso-alchemy-minigame-abort-button", "abort-button.png"],
+  temperatureNeedle: ["pixso-alchemy-minigame-temperature-needle", "temperature-needle.png"],
+});
+
+const PHASE_CARD_POSITIONS = Object.freeze([
+  Object.freeze({ x: 558.2338, y: 157.05 }),
+  Object.freeze({ x: 833.0001, y: 157.05 }),
+  Object.freeze({ x: 1107.7665, y: 157.05 }),
+]);
+const STABILITY_ROWS = Object.freeze([
+  Object.freeze({ texture: ASSETS.stabilityWarm[0], x: 226.91, y: 636.057, labelY: 661.057 }),
+  Object.freeze({ texture: ASSETS.stabilityInfuse[0], x: 226.91, y: 689.477, labelY: 713.977 }),
+  Object.freeze({ texture: ASSETS.stabilityCondense[0], x: 226.91, y: 743.897, labelY: 767.897 }),
+]);
+
+const GAUGE_LEFT = 534.96;
+const GAUGE_RIGHT = 1385.04;
+const GAUGE_WIDTH = GAUGE_RIGHT - GAUGE_LEFT;
+const TARGET_TOP = 843.043;
+const TARGET_HEIGHT = 76;
+
+export function preloadAlchemyMinigameAssets(scene) {
+  Object.values(ASSETS).forEach(([key, filename]) => {
+    if (!scene.textures.exists(key)) scene.load.image(key, `${ASSET_ROOT}/${filename}`);
+  });
+}
+
+const text = (scene, x, y, content, size, color, options = {}) => addText(
+  scene,
+  x,
+  y,
+  content,
+  size,
+  color,
+  { strokeThickness: 0, fontFamily: BODY_FONT, ...options },
+);
 
 /**
- * 炼丹控火小游戏表现层：负责按键、动画和倒计时。
- * 温度、阶段、评分和奖励修正全部来自 AlchemyMinigameService / AlchemyService。
+ * 炼丹控火小游戏表现层：严格复现 Pixso「炼丹房-小游戏」画板，只负责绘制、输入与即时反馈。
+ * 温度、阶段、评分、凝丹条件和奖励修正全部来自 AlchemyMinigameService / AlchemyService。
  */
 export class AlchemyMinigamePanel {
   constructor(scene, { rules, attempt, onResolve, onAbort, onClose }) {
@@ -29,110 +83,218 @@ export class AlchemyMinigamePanel {
     const scene = this.scene;
     this.gameLayer = scene.add.container(0, 0);
     this.root.add(this.gameLayer);
-    this.gameLayer.add(scene.add.rectangle(0, 0, 1920, 1080, 0x100706, 1).setOrigin(0).setInteractive());
-    this.gameLayer.add(scene.add.rectangle(960, 58, 1920, 116, 0x25100b, 1));
-    this.gameLayer.add(addText(scene, 960, 42, "炼丹 · 控火", 34, "#f3c66c", { origin: 0.5, strokeThickness: 3 }));
-    this.gameLayer.add(addText(scene, 960, 82, `${this.attempt.recipe.name} · ${this.attempt.furnace.name}`, 16, "#c69a75", { origin: 0.5, strokeThickness: 0 }));
-    this.gameLayer.add(addButton(scene, 1775, 58, 190, "放弃本炉", () => this.abort(), { height: 46, size: 17 }));
 
-    this.phaseCards = this.session.stages.map((stage, index) => {
-      const x = 650 + index * 310;
-      const bg = scene.add.rectangle(x, 164, 250, 70, 0x241813, 1).setStrokeStyle(2, 0x5d4535);
-      const seal = scene.add.circle(x - 77, 164, 23, 0x6a4625, 1).setStrokeStyle(2, 0xbd8843);
-      const sealText = addText(scene, x - 77, 164, stage.seal, 16, "#ffe1a4", { origin: 0.5, strokeThickness: 1 });
-      const label = addText(scene, x - 37, 164, `${index + 1}. ${stage.label}`, 19, "#c5af99", { origin: [0, 0.5], strokeThickness: 1 });
-      this.gameLayer.add([bg, seal, sealText, label]);
-      return { bg, seal, sealText, label };
-    });
-
-    this.gameLayer.add(scene.add.rectangle(280, 505, 360, 500, 0x1b1110, 0.96).setStrokeStyle(2, 0x70442b));
-    this.gameLayer.add(addText(scene, 280, 290, "药性稳定", 22, "#efbd68", { origin: 0.5, strokeThickness: 2 }));
-    this.stabilityRing = scene.add.circle(280, 445, 105, 0x281713, 1).setStrokeStyle(10, 0x60452f);
-    this.gameLayer.add(this.stabilityRing);
-    this.accuracyText = addText(scene, 280, 430, "0%", 46, "#f1c463", { origin: 0.5, strokeThickness: 2 });
-    this.gameLayer.add(this.accuracyText);
-    this.gameLayer.add(addText(scene, 280, 485, "控火评分", 15, "#aa9381", { origin: 0.5, strokeThickness: 0 }));
-    this.stageRatiosText = addText(scene, 280, 575, "温炉 0%\n融药 0%\n凝丹 0%", 17, "#cbb6a2", {
-      origin: 0.5, align: "center", lineSpacing: 13, strokeThickness: 0,
-    });
-    this.gameLayer.add(this.stageRatiosText);
-    this.gameLayer.add(addText(scene, 280, 690, "高分会提升成丹率，\n并增加额外成丹机会。", 14, "#907e70", {
-      origin: 0.5, align: "center", lineSpacing: 6, strokeThickness: 0,
+    this.gameLayer.add(scene.add.image(0, 0, ASSETS.background[0]).setOrigin(0).setInteractive());
+    this.gameLayer.add(text(scene, 960, 44.8, "炼丹·控火", 49, "#ddac4f", {
+      origin: 0.5,
+      fontFamily: TITLE_FONT,
+      stroke: "#21160c",
+      strokeThickness: 2,
     }));
 
-    this.gameLayer.add(scene.add.rectangle(1640, 505, 360, 500, 0x1b1110, 0.96).setStrokeStyle(2, 0x70442b));
-    this.stageTitle = addText(scene, 1640, 330, "", 30, "#f2c166", { origin: 0.5, strokeThickness: 2 });
-    this.stageInstruction = addText(scene, 1640, 410, "", 16, "#d1c0ae", {
-      origin: 0.5, align: "center", wordWrap: { width: 295 }, lineSpacing: 8, strokeThickness: 0,
-    });
-    this.timeText = addText(scene, 1640, 520, "", 52, "#ffffff", { origin: 0.5, strokeThickness: 2 });
-    this.stageTargetText = addText(scene, 1640, 600, "", 17, "#dda956", { origin: 0.5, strokeThickness: 1 });
-    this.controlHint = addText(scene, 1640, 675, "空格键 / 鼠标长按催火", 14, "#9f8b78", { origin: 0.5, strokeThickness: 0 });
-    this.gameLayer.add([this.stageTitle, this.stageInstruction, this.timeText, this.stageTargetText, this.controlHint]);
+    this.abortButton = scene.add.image(1662.392, 20.012, ASSETS.abortButton[0])
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
+    this.abortButton.on("pointerover", () => this.abortButton.setTint(0xffe0a0));
+    this.abortButton.on("pointerout", () => this.abortButton.clearTint());
+    this.abortButton.on("pointerdown", () => this.abort());
+    this.gameLayer.add([
+      this.abortButton,
+      text(scene, 1760.892, 49.617, "放弃本炉", 22, "#ddac4f", {
+        origin: 0.5,
+        fontFamily: TITLE_FONT,
+        stroke: "#21160c",
+        strokeThickness: 1,
+      }),
+    ]);
 
-    this.drawCauldron();
+    this.drawPhaseCards();
+    this.drawStabilityPanel();
+    this.drawStagePanel();
+
+    this.cauldronImage = scene.add.image(668.967, 267.084, ASSETS.cauldronStage[0]).setOrigin(0);
+    this.gameLayer.add(this.cauldronImage);
+
     this.drawTemperatureGauge();
     this.drawControls();
   }
 
-  drawCauldron() {
+  drawPhaseCards() {
     const scene = this.scene;
-    this.fireGlow = scene.add.ellipse(960, 704, 300, 120, 0xf05b20, 0.24);
-    this.flameOuter = scene.add.triangle(960, 700, -80, 55, 0, -115, 80, 55, 0xe35d1b, 0.92);
-    this.flameInner = scene.add.triangle(960, 705, -42, 35, 0, -76, 42, 35, 0xffc33d, 0.95);
-    const pot = scene.add.graphics();
-    pot.lineStyle(8, 0x70401f, 1);
-    pot.fillStyle(this.attempt.furnace.color, 1);
-    pot.fillEllipse(960, 520, 330, 245);
-    pot.strokeEllipse(960, 520, 330, 245);
-    pot.fillStyle(0x1c0d09, 1);
-    pot.fillEllipse(960, 415, 295, 58);
-    pot.lineStyle(7, 0xba7b32, 1);
-    pot.strokeEllipse(960, 415, 295, 58);
-    pot.lineStyle(18, 0x70401f, 1);
-    pot.beginPath(); pot.arc(780, 505, 76, 1.45, 4.8); pot.strokePath();
-    pot.beginPath(); pot.arc(1140, 505, 76, -1.65, 1.7); pot.strokePath();
-    pot.lineStyle(16, 0x5a3119, 1);
-    pot.lineBetween(885, 620, 855, 695);
-    pot.lineBetween(1035, 620, 1065, 695);
-    const seal = scene.add.circle(960, 520, 54, 0xc9892d, 1).setStrokeStyle(4, 0xffdc6b);
-    const sealText = addText(scene, 960, 520, "丹", 39, "#fff2c1", { origin: 0.5, strokeThickness: 2 });
-    this.gameLayer.add([this.fireGlow, this.flameOuter, this.flameInner, pot, seal, sealText]);
-    this.scene.tweens.add({ targets: [this.flameOuter, this.flameInner], scaleX: 1.08, duration: 180, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    this.phaseCards = this.session.stages.map((stage, index) => {
+      const position = PHASE_CARD_POSITIONS[index];
+      const card = scene.add.image(position.x, position.y, ASSETS.phaseCard[0]).setOrigin(0);
+      const seal = scene.add.image(position.x + 58.367, position.y + 9, ASSETS.phaseSeal[0]).setOrigin(0);
+      const sealText = text(scene, position.x + 83.367, position.y + 34.5, stage.seal, 26, "#ddac4f", {
+        origin: 0.5,
+        fontFamily: LABEL_FONT,
+        stroke: "#25170c",
+        strokeThickness: 1,
+      });
+      const label = text(scene, position.x + 159.5, position.y + 34.5, `${index + 1}、${stage.label}`, 20, "#ddac4f", {
+        origin: 0.5,
+        fontFamily: TITLE_FONT,
+        stroke: "#25170c",
+        strokeThickness: 1,
+      });
+      this.gameLayer.add([card, seal, sealText, label]);
+      return { card, seal, sealText, label };
+    });
+  }
+
+  drawStabilityPanel() {
+    const scene = this.scene;
+    this.gameLayer.add(scene.add.image(133.675, 252, ASSETS.stabilityPanel[0]).setOrigin(0));
+    this.gameLayer.add(scene.add.image(236.41, 340.584, ASSETS.stabilityRing[0]).setOrigin(0));
+    this.gameLayer.add(text(scene, 211.33, 301.151, "药性稳定", 24, "#ddac4f", {
+      fontFamily: TITLE_FONT,
+      stroke: "#21160c",
+      strokeThickness: 1,
+    }));
+
+    this.stabilityProgress = scene.add.graphics();
+    this.gameLayer.add(this.stabilityProgress);
+    this.accuracyText = text(scene, 363.83, 443.964, "0%", 49, "#62a985", {
+      origin: 0.5,
+      fontFamily: TITLE_FONT,
+      stroke: "#0a0807",
+      strokeThickness: 2,
+    });
+    this.gameLayer.add([
+      this.accuracyText,
+      text(scene, 363.83, 497.204, "控火评分", 16, "#f8f0d9", { origin: 0.5 }),
+      text(scene, 359.41, 609.517, "高分会提升成丹率，并增加额外成丹机会", 14, "#a09e85", {
+        origin: 0.5,
+        fontFamily: CAPTION_FONT,
+      }),
+    ]);
+
+    const labels = ["温炉", "融药", "凝丹"];
+    this.stageRatioTexts = STABILITY_ROWS.map((row, index) => {
+      this.gameLayer.add(scene.add.image(row.x, row.y, row.texture).setOrigin(0));
+      const label = text(scene, 293.523, row.labelY, labels[index], 18, "#f8f0d9", { origin: [0, 0.5] });
+      const ratio = text(scene, 467.533, row.labelY, "0%", 18, "#f8f0d9", {
+        origin: [1, 0.5],
+        fontStyle: "600",
+      });
+      this.gameLayer.add([label, ratio]);
+      return ratio;
+    });
+  }
+
+  drawStagePanel() {
+    const scene = this.scene;
+    this.gameLayer.add(scene.add.image(1370.161, 251, ASSETS.stagePanel[0]).setOrigin(0));
+    this.stageTitle = text(scene, 1558.058, 330.659, "", 30, "#ddac4f", {
+      origin: 0.5,
+      fontFamily: TITLE_FONT,
+      stroke: "#4a361d",
+      strokeThickness: 2,
+    });
+    this.stageInstruction = text(scene, 1558.058, 382.637, "", 16, "#443509", {
+      origin: 0.5,
+      align: "center",
+      wordWrap: { width: 288 },
+    });
+    this.timeText = text(scene, 1558.058, 503.327, "", 80, "#4a361d", {
+      origin: 0.5,
+      fontFamily: TITLE_FONT,
+      stroke: "#d9b66d",
+      strokeThickness: 1,
+    });
+    this.stageTemperatureLabel = text(scene, 1558.058, 606.017, "当前温度", 16, "#443509", { origin: 0.5 });
+    this.stageTargetText = text(scene, 1558.058, 637.017, "", 26, "#364c22", {
+      origin: 0.5,
+      fontFamily: BODY_FONT,
+    });
+    this.controlHint = text(scene, 1558.058, 771.321, "空格键/鼠标长按催火", 16, "#443509", { origin: 0.5 });
+    this.gameLayer.add([
+      this.stageTitle,
+      this.stageInstruction,
+      this.timeText,
+      this.stageTemperatureLabel,
+      this.stageTargetText,
+      this.controlHint,
+    ]);
   }
 
   drawTemperatureGauge() {
     const scene = this.scene;
-    this.gameLayer.add(addText(scene, GAUGE_LEFT, GAUGE_Y - 66, "炉温", 19, "#e9c27b", { strokeThickness: 1 }));
-    const track = scene.add.graphics();
-    track.fillStyle(0x1b2438, 1); track.fillRoundedRect(GAUGE_LEFT, GAUGE_Y - 20, GAUGE_WIDTH * 0.35, 40, 12);
-    track.fillStyle(0x9a6829, 1); track.fillRect(GAUGE_LEFT + GAUGE_WIDTH * 0.35, GAUGE_Y - 20, GAUGE_WIDTH * 0.35, 40);
-    track.fillStyle(0x8e2b21, 1); track.fillRoundedRect(GAUGE_LEFT + GAUGE_WIDTH * 0.7, GAUGE_Y - 20, GAUGE_WIDTH * 0.3, 40, 12);
-    track.lineStyle(3, 0xd6aa61, 1); track.strokeRoundedRect(GAUGE_LEFT, GAUGE_Y - 20, GAUGE_WIDTH, 40, 12);
-    this.gameLayer.add(track);
-    this.targetBand = scene.add.rectangle(GAUGE_LEFT, GAUGE_Y, 100, 54, 0x74d68e, 0.35)
-      .setOrigin(0, 0.5).setStrokeStyle(3, 0xb9f18b, 0.95);
-    this.needle = scene.add.rectangle(GAUGE_LEFT, GAUGE_Y, 6, 76, 0xfff0a1, 1).setStrokeStyle(2, 0x6b3e1f);
-    this.temperatureText = addText(scene, GAUGE_LEFT + GAUGE_WIDTH, GAUGE_Y - 66, "20", 25, "#fff0b1", { origin: [1, 0], strokeThickness: 2 });
-    this.gameLayer.add([this.targetBand, this.needle, this.temperatureText]);
-    this.gameLayer.add(addText(scene, GAUGE_LEFT, GAUGE_Y + 35, "寒", 14, "#849fca", { strokeThickness: 0 }));
-    this.gameLayer.add(addText(scene, GAUGE_LEFT + GAUGE_WIDTH, GAUGE_Y + 35, "烈", 14, "#e18268", { origin: [1, 0], strokeThickness: 0 }));
+    this.gameLayer.add(scene.add.image(519, 851.052, ASSETS.temperatureTrack[0]).setOrigin(0));
+
+    const zones = scene.add.graphics();
+    zones.fillGradientStyle(0x40759e, 0x162635, 0x40759e, 0x162635, 1);
+    zones.fillRect(GAUGE_LEFT, 861.043, 295.04, 40);
+    zones.fillGradientStyle(0x39492e, 0x9fc68c, 0x39492e, 0x9fc68c, 1);
+    zones.fillRect(830, 861.043, 130, 40);
+    zones.fillGradientStyle(0x9fc68c, 0x39492e, 0x9fc68c, 0x39492e, 1);
+    zones.fillRect(960, 861.043, 130, 40);
+    zones.fillGradientStyle(0xac743c, 0x552720, 0xac743c, 0x552720, 1);
+    zones.fillRect(1090, 861.043, 295.04, 40);
+    this.gameLayer.add(zones);
+
+    this.targetBand = scene.add.rectangle(GAUGE_LEFT, TARGET_TOP, 100, TARGET_HEIGHT, 0xbb976c, 0.1)
+      .setOrigin(0)
+      .setStrokeStyle(2, 0xbb976c, 1);
+    this.temperatureNeedle = scene.add.image(GAUGE_LEFT, 835, ASSETS.temperatureNeedle[0]).setOrigin(0.5, 0);
+    this.temperatureText = text(scene, 977.266, 798, "20", 26, "#ddac4f", {
+      fontFamily: LABEL_FONT,
+      stroke: "#21160c",
+      strokeThickness: 1,
+    });
+    this.gameLayer.add([
+      this.targetBand,
+      this.temperatureNeedle,
+      text(scene, 913.799, 798, "温度", 26, "#ddac4f", {
+        fontFamily: LABEL_FONT,
+        stroke: "#21160c",
+        strokeThickness: 1,
+      }),
+      this.temperatureText,
+      text(scene, 547.675, 866.052, "寒", 26, "#93b1bd", {
+        fontFamily: LABEL_FONT,
+        stroke: "#172026",
+        strokeThickness: 1,
+      }),
+      text(scene, 1344.161, 866.052, "烈", 26, "#d78b61", {
+        fontFamily: LABEL_FONT,
+        stroke: "#2b1710",
+        strokeThickness: 1,
+      }),
+    ]);
   }
 
   drawControls() {
     const scene = this.scene;
-    this.heatButtonBg = scene.add.rectangle(800, 960, 330, 72, 0x65301d, 1)
-      .setStrokeStyle(3, 0xe09842)
+    this.heatButton = scene.add.image(596.934, 949.405, ASSETS.heatButton[0])
+      .setOrigin(0)
       .setInteractive({ useHandCursor: true });
-    this.heatButtonText = addText(scene, 800, 960, "长按催火  [空格]", 23, "#ffe4a3", { origin: 0.5, strokeThickness: 2 });
-    this.condenseButtonBg = scene.add.rectangle(1140, 960, 260, 72, 0x312720, 1)
-      .setStrokeStyle(3, 0x6d5a48)
+    this.condenseButton = scene.add.image(985, 949.405, ASSETS.condenseButton[0])
+      .setOrigin(0)
       .setInteractive({ useHandCursor: true });
-    this.condenseButtonText = addText(scene, 1140, 960, "凝丹诀未就绪", 21, "#82776c", { origin: 0.5, strokeThickness: 2 });
-    this.statusText = addText(scene, 960, 1040, "控火开始：先将炉温升入目标区域。", 16, "#d8bd83", { origin: 0.5, strokeThickness: 1 });
-    this.gameLayer.add([this.heatButtonBg, this.heatButtonText, this.condenseButtonBg, this.condenseButtonText, this.statusText]);
-    this.heatButtonBg.on("pointerdown", () => { this.heating = true; });
-    this.condenseButtonBg.on("pointerdown", () => this.tryCondense());
+    this.heatButtonText = text(scene, 770, 978.905, "长按催火[空格]", 20, "#442109", {
+      origin: 0.5,
+      fontStyle: "600",
+    });
+    this.condenseButtonText = text(scene, 1127.5, 978.905, "凝丹诀未就绪", 20, "#64513c", {
+      origin: 0.5,
+      fontStyle: "600",
+    });
+    this.statusText = text(scene, 960, 1042.5, "控火开始:先将炉温升入目标区域。", 14, "#a09e85", {
+      origin: 0.5,
+      fontFamily: CAPTION_FONT,
+    });
+    this.gameLayer.add([
+      this.heatButton,
+      this.condenseButton,
+      this.heatButtonText,
+      this.condenseButtonText,
+      this.statusText,
+    ]);
+    this.heatButton.on("pointerdown", () => { this.heating = true; });
+    this.heatButton.on("pointerover", () => { if (!this.heating) this.heatButton.setTint(0xffedca); });
+    this.heatButton.on("pointerout", () => { if (!this.heating) this.heatButton.clearTint(); });
+    this.condenseButton.on("pointerdown", () => this.tryCondense());
   }
 
   bindInput() {
@@ -159,11 +321,26 @@ export class AlchemyMinigamePanel {
     const result = this.rules.tick(this.session, { deltaMs: 50, heating: this.heating });
     if (result.stageChanged) {
       const stage = this.rules.getStage(this.session);
-      this.statusText.setText(`进入${stage.label}阶段：${stage.instruction}`);
-      this.scene.tweens.add({ targets: this.stageTitle, scale: { from: 1.25, to: 1 }, duration: 260, ease: "Back.easeOut" });
+      this.statusText.setText(`进入${stage.label}阶段:${stage.instruction}`);
+      this.scene.tweens.add({ targets: this.stageTitle, scale: { from: 1.15, to: 1 }, duration: 260, ease: "Back.easeOut" });
     }
     this.updateDisplay();
     if (result.expired) this.resolve(this.rules.finish(this.session, { manual: false }));
+  }
+
+  updateStabilityProgress(accuracy) {
+    const progress = Math.max(0, Math.min(100, accuracy)) / 100;
+    const centerX = 359.099;
+    const centerY = 463.513;
+    const radius = 96;
+    this.stabilityProgress.clear();
+    this.stabilityProgress.lineStyle(12, 0x0a0807, 1);
+    this.stabilityProgress.strokeCircle(centerX, centerY, radius);
+    if (progress <= 0) return;
+    this.stabilityProgress.lineStyle(12, 0x62a985, 1);
+    this.stabilityProgress.beginPath();
+    this.stabilityProgress.arc(centerX, centerY, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress, false);
+    this.stabilityProgress.strokePath();
   }
 
   updateDisplay() {
@@ -172,36 +349,51 @@ export class AlchemyMinigamePanel {
     const inTarget = this.session.temperature >= stage.targetMin && this.session.temperature <= stage.targetMax;
     const targetX = GAUGE_LEFT + (stage.targetMin / 100) * GAUGE_WIDTH;
     const targetWidth = ((stage.targetMax - stage.targetMin) / 100) * GAUGE_WIDTH;
-    this.targetBand.setPosition(targetX, GAUGE_Y).setDisplaySize(targetWidth, 54)
-      .setFillStyle(inTarget ? 0x77d58d : 0xc3a04b, inTarget ? 0.55 : 0.32);
-    this.needle.setPosition(GAUGE_LEFT + (this.session.temperature / 100) * GAUGE_WIDTH, GAUGE_Y);
-    this.temperatureText.setText(`${Math.round(this.session.temperature)} 火`);
-    this.stageTitle.setText(`${stage.seal} · ${stage.label}`);
+    this.targetBand.setPosition(targetX, TARGET_TOP).setDisplaySize(targetWidth, TARGET_HEIGHT)
+      .setFillStyle(inTarget ? 0x83b36d : 0xbb976c, inTarget ? 0.2 : 0.1)
+      .setStrokeStyle(2, inTarget ? 0xc5dd82 : 0xbb976c, 1);
+    this.temperatureNeedle.setX(GAUGE_LEFT + (this.session.temperature / 100) * GAUGE_WIDTH);
+    this.temperatureText.setText(`${Math.round(this.session.temperature)}`);
+    this.stageTitle.setText(`${stage.seal}·${stage.label}`);
     this.stageInstruction.setText(stage.instruction);
     this.timeText.setText(`${Math.max(0, Math.ceil((stage.durationMs - this.session.stageElapsedMs) / 1000))}`);
-    this.stageTargetText.setText(`目标炉温 ${stage.targetMin}～${stage.targetMax}`);
+    this.stageTargetText.setText(`${stage.targetMin} / ${stage.targetMax}`);
+
     const accuracy = this.rules.getLiveAccuracy(this.session);
-    this.accuracyText.setText(`${accuracy}%`).setColor(accuracy >= 72 ? "#8fe0a4" : accuracy >= 40 ? "#f1c463" : "#d47c67");
+    this.updateStabilityProgress(accuracy);
+    this.accuracyText.setText(`${accuracy}%`).setColor(accuracy >= 72 ? "#8ed9a5" : accuracy >= 40 ? "#ddac4f" : "#62a985");
     const ratios = this.session.stages.map((_entry, index) => Math.round(
       (this.session.targetMs[index] || 0) / Math.max(1, this.session.observedMs[index] || 0) * 100,
     ));
-    this.stageRatiosText.setText(`温炉 ${ratios[0]}%\n融药 ${ratios[1]}%\n凝丹 ${ratios[2]}%`);
+    this.stageRatioTexts.forEach((ratioText, index) => {
+      ratioText.setText(`${ratios[index]}%`).setColor(index === this.session.stageIndex ? "#62a985" : "#f8f0d9");
+    });
+
     this.phaseCards.forEach((card, index) => {
       const active = index === this.session.stageIndex;
       const done = index < this.session.stageIndex;
-      card.bg.setFillStyle(active ? 0x5d351a : done ? 0x213725 : 0x241813);
-      card.bg.setStrokeStyle(2, active ? 0xe0a64c : done ? 0x69a273 : 0x5d4535);
-      card.label.setColor(active ? "#ffe2a4" : done ? "#8fd0a0" : "#9f8d7c");
+      const color = active ? "#ddac4f" : done ? "#62a985" : "#9c9682";
+      card.card.setAlpha(active ? 1 : done ? 0.92 : 0.78);
+      card.seal.setAlpha(active ? 1 : 0.78);
+      if (active) card.seal.clearTint();
+      else card.seal.setTint(done ? 0x87b89a : 0xa19b8d);
+      card.sealText.setColor(color);
+      card.label.setColor(color).setFontSize(active ? 20 : 18);
     });
-    const heatScale = 0.72 + this.session.temperature / 120;
-    this.fireGlow.setScale(heatScale, 0.8 + this.session.temperature / 180).setAlpha(0.18 + this.session.temperature / 180);
-    this.flameOuter.setScale(heatScale).setAlpha(0.55 + this.session.temperature / 230);
-    this.flameInner.setScale(Math.max(0.65, heatScale * 0.78));
-    this.heatButtonBg.setFillStyle(this.heating ? 0xa7481f : 0x65301d);
+
+    if (this.heating) this.heatButton.setTint(0xffd49a);
+    else this.heatButton.clearTint();
     const ready = this.rules.canCondense(this.session);
-    this.condenseButtonBg.setFillStyle(ready ? 0x8b5a22 : 0x312720).setStrokeStyle(3, ready ? 0xf1bd58 : 0x6d5a48);
-    this.condenseButtonText.setText(ready ? "收诀凝丹" : "凝丹诀未就绪").setColor(ready ? "#fff0b0" : "#82776c");
-    if (inTarget && !this.heating) this.statusText.setText("药性稳定，保持当前控火节奏。");
+    if (ready) this.condenseButton.setTint(0xffd16b);
+    else this.condenseButton.clearTint();
+    this.condenseButtonText
+      .setText(ready ? "收诀凝丹" : "凝丹诀未就绪")
+      .setColor(ready ? "#f0c45f" : "#64513c");
+
+    if (ready) this.statusText.setText("凝丹诀已就绪，立即收诀凝丹。");
+    else if (inTarget) this.statusText.setText("药性稳定，保持当前控火节奏。");
+    else if (this.session.temperature < stage.targetMin) this.statusText.setText("炉温偏低，长按催火升入目标区域。");
+    else this.statusText.setText("炉温偏高，松开催火让温度缓慢下降。");
   }
 
   tryCondense() {
@@ -221,30 +413,21 @@ export class AlchemyMinigamePanel {
 
   showResult(outcome, result) {
     this.gameLayer.destroy(true);
-    const scene = this.scene;
-    this.resultLayer = scene.add.container(0, 0);
-    this.root.add(this.resultLayer);
-    this.resultLayer.add(scene.add.rectangle(0, 0, 1920, 1080, 0x100706, 1).setOrigin(0).setInteractive());
-    const visualSuccess = result.practice ? result.successful : result.ok;
-    const glowColor = visualSuccess ? 0xd4932e : 0x8c3428;
-    const outer = scene.add.circle(960, 500, 250, glowColor, 0.14).setStrokeStyle(4, glowColor, 0.75);
-    const inner = scene.add.circle(960, 500, 175, 0x2a1710, 1).setStrokeStyle(3, visualSuccess ? 0xf0be59 : 0xb95c4f);
-    const sealLabel = result.practice ? "习" : visualSuccess ? "丹" : "散";
-    const titleLabel = result.practice ? "控 火 演 练" : visualSuccess ? "丹 成" : "炼 制 失 败";
-    const seal = addText(scene, 960, 430, sealLabel, 86, visualSuccess ? "#f7d375" : "#db8171", { origin: 0.5, strokeThickness: 3 });
-    const title = addText(scene, 960, 555, titleLabel, 38, visualSuccess ? "#f5cf72" : "#df8b79", { origin: 0.5, strokeThickness: 3 });
-    const grade = addText(scene, 960, 615, `${outcome.grade}火候 · 控火评分 ${outcome.score}`, 22, "#e7bd71", { origin: 0.5, strokeThickness: 1 });
-    const ratios = addText(scene, 960, 670, `温炉 ${outcome.stageRatios[0]}%   融药 ${outcome.stageRatios[1]}%   凝丹 ${outcome.stageRatios[2]}%`, 16, "#c8b39d", { origin: 0.5, strokeThickness: 0 });
-    const message = addText(scene, 960, 730, result.message, 19, result.ok ? "#d9e3c5" : "#d7b1a8", {
-      origin: 0.5, align: "center", wordWrap: { width: 700 }, lineSpacing: 8, strokeThickness: 1,
+    this.resultMessage = result.message || "";
+    this.resultPanel = new AlchemyResultPanel(this.scene, {
+      outcome,
+      result,
+      onClose: () => this.close(this.resultMessage),
     });
-    const close = addButton(scene, 960, 850, 250, result.practice ? "返回丹房" : result.ok ? "收取丹药" : "返回丹房", () => this.close(result.message), { height: 56, size: 20 });
-    this.resultLayer.add([outer, inner, seal, title, grade, ratios, message, close]);
-    scene.tweens.add({ targets: outer, scale: { from: 0.78, to: 1.08 }, alpha: { from: 0.2, to: 0.75 }, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    this.root.add(this.resultPanel.root);
   }
 
   abort() {
-    if (this.resolved) { this.close(); return; }
+    if (this.resolved) {
+      if (this.resultPanel) this.resultPanel.handleEscape();
+      else this.close(this.resultMessage || "");
+      return;
+    }
     this.stopRuntime();
     const result = this.onAbort?.() || { message: "已放弃本炉炼制。" };
     this.resolved = true;
@@ -255,6 +438,8 @@ export class AlchemyMinigamePanel {
 
   close(message = "") {
     this.stopRuntime();
+    this.resultPanel?.destroy();
+    this.resultPanel = null;
     this.root?.destroy(true);
     this.root = null;
     this.onClose?.(message);

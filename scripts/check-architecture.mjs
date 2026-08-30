@@ -100,6 +100,14 @@ for (const file of collectJavaScriptFiles(sourceRoot)) {
       failures.push(`${relativePath}: 大地图场景必须通过 MapExplorationService 记录探索足迹`);
     }
   }
+  if (relativePath === "src/scenes/SectScene.js") {
+    if (!/from\s+["'][^"']*\/ui\/character\/CharacterMenuPanel\.js["']/.test(executableSource)) {
+      failures.push(`${relativePath}: 门派顶栏必须复用 CharacterMenuPanel 打开角色功能页`);
+    }
+    if (/当前请返回大地图使用完整功能/.test(executableSource)) {
+      failures.push(`${relativePath}: 门派顶栏不能退回功能占位提示，必须打开对应真实页面`);
+    }
+  }
   if (relativePath === "src/scenes/CharacterCreateScene.js") {
     if (!/from\s+["'][^"']*\/domain\/character\/CharacterCreationService\.js["']/.test(executableSource)) {
       failures.push(`${relativePath}: 角色创建场景必须通过 CharacterCreationService 执行创建规则`);

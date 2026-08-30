@@ -147,18 +147,17 @@ export class PlayerTopToolbar {
   drawFeatureEntries() {
     const scene = this.scene;
     const entries = [
-      ["storage", "pixso-ui-store", "储物袋"],
-      ["spells", "pixso-ui-spell", "法术"],
-      ["techniques", "pixso-ui-gongfa", "功法"],
-      ["artifacts", "pixso-ui-artifact", "法宝"],
-      ["save", "pixso-ui-save", "存档"],
-      ["settings", "pixso-ui-settings", "设置"],
+      { id: "storage", textureKey: "pixso-ui-store", label: "储物袋", bgX: 537.5, iconX: 534, iconY: 66, iconSize: 100, labelX: 538 },
+      { id: "spells", textureKey: "pixso-ui-spell", label: "法术", bgX: 694.5, iconX: 694, iconY: 68, iconSize: 100, labelX: 694 },
+      { id: "techniques", textureKey: "pixso-ui-gongfa", label: "功法", bgX: 851.5, iconX: 851, iconY: 67, iconSize: 100, labelX: 850 },
+      { id: "artifacts", textureKey: "pixso-ui-artifact", label: "法宝", bgX: 1008.5, iconX: 1007, iconY: 64, iconSize: 90, labelX: 1006 },
+      { id: "save", textureKey: "pixso-ui-save", label: "存档", bgX: 1165.5, iconX: 1166, iconY: 64, iconSize: 100, labelX: 1162 },
+      { id: "settings", textureKey: "pixso-ui-settings", label: "设置", bgX: 1322.5, iconX: 1322, iconY: 67, iconSize: 90, labelX: 1318 },
     ];
-    const iconXs = [537, 690, 849, 1002, 1158, 1313];
-    entries.forEach(([id, textureKey, label], index) => {
-      const x = iconXs[index];
-      this.fixed(scene.add.image(x, 77, "pixso-ui-brush").setDisplaySize(111, 111));
-      const icon = this.fixed(scene.add.image(x, 77, textureKey).setDisplaySize(100, 100));
+    entries.forEach(({ id, textureKey, label, bgX, iconX, iconY, iconSize, labelX }) => {
+      // 下列坐标与 Pixso“进入门派”画板的六个 109×109 图标位一一对应。
+      this.fixed(scene.add.image(bgX, 67.5, "pixso-ui-brush").setDisplaySize(109, 109));
+      const icon = this.fixed(scene.add.image(iconX, iconY, textureKey).setDisplaySize(iconSize, iconSize));
       const action = this.actions[id];
       if (typeof action === "function") {
         icon.setInteractive({ useHandCursor: true });
@@ -168,7 +167,7 @@ export class PlayerTopToolbar {
           action();
         });
       }
-      this.fixed(addText(scene, x, 138, label, 23, "#fff6dd", { strokeThickness: 5 }))
+      this.fixed(addText(scene, labelX, 120.5, label, 23, "#fff6dd", { strokeThickness: 5 }))
         .setOrigin(0.5);
 
       const normalScaleX = icon.scaleX;

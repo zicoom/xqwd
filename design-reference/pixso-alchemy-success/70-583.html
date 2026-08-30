@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>炼丹房 · 炼丹成功（Pixso 参考）</title>
+  <style>
+@font-face {
+	font-family: 'Noto Sans SC';
+	font-style: normal;
+	font-weight: 400;
+	src: url(../../public/assets/fonts/NotoSansSC-VariableFont_wght_2.ttf) format('truetype');
+}
+
+</style>
+  <style>
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+ol,ul,menu {
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+ol li::marker, ul li::before {
+  letter-spacing: 0;
+}
+
+.scroll-container > div {
+  width: 100%;
+}
+
+.container > div {
+  width: 100%;
+}
+
+.Pixso-canvas-0_1 > main {
+  width: 100%;
+}
+
+html {
+  width: 100%;
+  height: 100%;
+}
+
+body { 
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background-color: white;
+}
+    
+span {
+  word-break: break-word;
+}
+
+.container {
+  width: 100%;
+  height: 100%;
+}
+
+.scroll-container {
+  height: 100%;
+  width: 100%;
+  overflow: auto;
+}
+
+.Pixso-canvas-0_1,.alchemy-success-screen {
+  width: 100%;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.Pixso-canvas-0_1 {
+  height: 100%;
+}
+
+.alchemy-success-screen {
+  height: 1080px;
+  min-width: 1920px;
+  overflow: hidden;
+  background-color: rgba(255, 255, 255, 1);
+  mix-blend-mode: normal;
+}
+
+.Pixso-rectangle-70_892,.Pixso-rectangle-70_890,.Pixso-rectangle-70_891,.Pixso-rectangle-70_886,.Pixso-paragraph-70_898,.Pixso-paragraph-70_901,.Pixso-paragraph-70_915,.Pixso-paragraph-70_928,.Pixso-paragraph-70_916,.Pixso-paragraph-70_899,.Pixso-rectangle-70_887,.Pixso-group-70_906,.Pixso-rectangle-70_888,.Pixso-paragraph-70_904,.Pixso-paragraph-70_905,.Pixso-group-70_907,.Pixso-rectangle-70_908,.Pixso-paragraph-70_909,.Pixso-paragraph-70_910,.Pixso-group-70_911,.Pixso-rectangle-70_912,.Pixso-paragraph-70_913,.Pixso-paragraph-70_914,.Pixso-group-70_931,.Pixso-rectangle-70_885,.Pixso-paragraph-70_917 {
+  position: absolute;
+  mix-blend-mode: normal;
+}
+
+.Pixso-rectangle-70_892,.Pixso-rectangle-70_890,.Pixso-rectangle-70_891,.Pixso-rectangle-70_886,.Pixso-rectangle-70_887,.Pixso-rectangle-70_888,.Pixso-rectangle-70_908,.Pixso-rectangle-70_912,.Pixso-rectangle-70_885 {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.Pixso-rectangle-70_892 {
+  width: 1920px;
+  height: 1080px;
+  right: 0px;
+  bottom: 0px;
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/e130f706994db12f40f06cae0344513adba56b0c.jpg");
+}
+
+.Pixso-rectangle-70_890 {
+  width: 830px;
+  height: 196px;
+  left: 50%;
+  top: 41.574463px;
+  transform: translateX(calc(-50% + 0px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/abb2401ca43c6afc1c6e3f97fdd9362a5e097d7c.png");
+}
+
+.Pixso-rectangle-70_891 {
+  width: 680px;
+  height: 535px;
+  left: 50%;
+  top: 197.248291px;
+  transform: translateX(calc(-50% + -5px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/f5f2dca5ab2e79985e6aea6ae6da39a898caa4f6.png");
+}
+
+.Pixso-rectangle-70_886 {
+  width: 420px;
+  height: 76px;
+  left: 50%;
+  top: 946.661621px;
+  transform: translateX(calc(-50% + 0px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/b8aab5fbb5e31b4493f685c8f01bee092235b075.png");
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.Pixso-paragraph-70_898,.Pixso-paragraph-70_901 {
+  font-family: "SJ yuantijian-C-Regular";
+  color: rgba(221, 172, 79, 1);
+  transform: translateX(calc(-50% + 6.645019999999988px));
+}
+
+.Pixso-paragraph-70_898,.Pixso-paragraph-70_901,.Pixso-paragraph-70_915,.Pixso-paragraph-70_928,.Pixso-paragraph-70_916,.Pixso-paragraph-70_899,.Pixso-paragraph-70_904,.Pixso-paragraph-70_905,.Pixso-paragraph-70_909,.Pixso-paragraph-70_910,.Pixso-paragraph-70_913,.Pixso-paragraph-70_914,.Pixso-paragraph-70_917 {
+  letter-spacing: 0px;
+  text-decoration: none;
+  white-space: pre;
+}
+
+.Pixso-paragraph-70_898,.Pixso-paragraph-70_901,.Pixso-paragraph-70_915,.Pixso-paragraph-70_928,.Pixso-paragraph-70_916,.Pixso-paragraph-70_899 {
+  width: auto;
+  height: auto;
+}
+
+.Pixso-paragraph-70_898,.Pixso-paragraph-70_901,.Pixso-paragraph-70_915,.Pixso-paragraph-70_928,.Pixso-paragraph-70_916,.Pixso-paragraph-70_899,.Pixso-paragraph-70_904,.Pixso-paragraph-70_905,.Pixso-paragraph-70_909,.Pixso-paragraph-70_910,.Pixso-paragraph-70_913,.Pixso-paragraph-70_914 {
+  -webkit-text-stroke: 1px transparent;
+  -webkit-background-clip: text;
+  background-color: rgba(0, 0, 0, 1);
+}
+
+.Pixso-paragraph-70_898,.Pixso-paragraph-70_901,.Pixso-paragraph-70_915 {
+  font-weight: 400;
+  text-align: center;
+  left: 50%;
+  flex-grow: 0;
+}
+
+.Pixso-paragraph-70_898 {
+  font-size: 50px;
+  top: 73.574463px;
+}
+
+.Pixso-paragraph-70_901 {
+  font-size: 44px;
+  top: 489.122314px;
+}
+
+.Pixso-paragraph-70_915 {
+  font-size: 30px;
+  font-family: "SJ yuantijian-Z-Regular";
+  color: rgba(231, 201, 119, 1);
+  top: 579.984253px;
+  transform: translateX(calc(-50% + -27.16503899999998px));
+}
+
+.Pixso-paragraph-70_928 {
+  font-size: 18px;
+  font-family: "Noto Sans SC-Regular";
+  font-weight: 400;
+  text-align: left;
+  color: rgba(248, 240, 216, 1);
+  left: 50%;
+  top: 623.236206px;
+  transform: translateX(calc(-50% + -4px));
+  flex-grow: 0;
+}
+
+.Pixso-paragraph-70_916,.Pixso-paragraph-70_899 {
+  font-size: 30px;
+  font-family: "SJ yuantijian-Z-Regular";
+  text-align: center;
+  color: rgba(231, 201, 119, 1);
+}
+
+.Pixso-paragraph-70_916 {
+  font-weight: 400;
+  left: 50%;
+  top: 579.984253px;
+  transform: translateX(calc(-50% + 71.66503899999998px));
+  flex-grow: 0;
+}
+
+.Pixso-paragraph-70_899 {
+  font-weight: 400;
+  right: 900px;
+  top: 50%;
+  transform: translateY(calc(-50% + 445.661743px));
+  flex-grow: 0;
+}
+
+.Pixso-rectangle-70_887 {
+  width: 118px;
+  height: 117px;
+  left: 903px;
+  top: 343.260376px;
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/3b5e4eb2a0c3d689ef7f462750475dcb5d3a310c.png");
+}
+
+.Pixso-group-70_906,.Pixso-rectangle-70_888 {
+  width: 234px;
+  height: 61px;
+}
+
+.Pixso-group-70_906 {
+  left: 576.64502px;
+  top: 758.392212px;
+}
+
+.Pixso-rectangle-70_888 {
+  left: 50%;
+  top: 0px;
+  transform: translateX(calc(-50% + 0px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/49442174eee6aa565ffda9b75a64ab54984a8071.png");
+}
+
+.Pixso-paragraph-70_904,.Pixso-paragraph-70_905 {
+  width: auto;
+  height: auto;
+  top: 17.5px;
+}
+
+.Pixso-paragraph-70_904,.Pixso-paragraph-70_905 {
+  font-size: 18px;
+  text-align: left;
+  left: 50%;
+  flex-grow: 0;
+}
+
+.Pixso-paragraph-70_904 {
+  font-family: "Noto Sans SC-Regular";
+  font-weight: 400;
+  color: rgba(248, 240, 216, 1);
+  transform: translateX(calc(-50% + -56.539062px));
+}
+
+.Pixso-paragraph-70_905 {
+  font-family: "Noto Sans SC-SemiBold";
+  font-weight: 600;
+  color: rgba(98, 169, 133, 1);
+  transform: translateX(calc(-50% + 50.450683999999995px));
+}
+
+.Pixso-group-70_907,.Pixso-rectangle-70_908 {
+  width: 234px;
+  height: 61px;
+}
+
+.Pixso-group-70_907 {
+  left: 838px;
+  top: 758.392212px;
+}
+
+.Pixso-rectangle-70_908 {
+  left: 50%;
+  top: 0px;
+  transform: translateX(calc(-50% + 0px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/49442174eee6aa565ffda9b75a64ab54984a8071.png");
+}
+
+.Pixso-paragraph-70_909,.Pixso-paragraph-70_910 {
+  height: auto;
+  top: 17.5px;
+}
+
+.Pixso-paragraph-70_909 {
+  font-size: 18px;
+  font-family: "Noto Sans SC-Regular";
+  font-weight: 400;
+  text-align: left;
+  font-feature-settings: "locl" 0;
+  color: rgba(248, 240, 216, 1);
+  width: 36px;
+  left: 50%;
+  transform: translateX(calc(-50% + -56.539062px));
+}
+
+.Pixso-paragraph-70_910 {
+  font-size: 18px;
+  font-family: "Noto Sans SC-SemiBold";
+  font-weight: 600;
+  text-align: right;
+  color: rgba(98, 169, 133, 1);
+  width: auto;
+  left: 50%;
+  transform: translateX(calc(-50% + 55.950683999999995px));
+  flex-grow: 0;
+}
+
+.Pixso-group-70_911,.Pixso-rectangle-70_912 {
+  width: 234px;
+  height: 61px;
+}
+
+.Pixso-group-70_911 {
+  left: 1099.35498px;
+  top: 758.392212px;
+}
+
+.Pixso-rectangle-70_912 {
+  left: 50%;
+  top: 0px;
+  transform: translateX(calc(-50% + 0px));
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/49442174eee6aa565ffda9b75a64ab54984a8071.png");
+}
+
+.Pixso-paragraph-70_913,.Pixso-paragraph-70_914 {
+  width: auto;
+  height: auto;
+  top: 17.5px;
+}
+
+.Pixso-paragraph-70_913 {
+  font-size: 18px;
+  font-family: "Noto Sans SC-Regular";
+  font-weight: 400;
+  text-align: left;
+  color: rgba(248, 240, 216, 1);
+  left: 50%;
+  transform: translateX(calc(-50% + -56.539062px));
+  flex-grow: 0;
+}
+
+.Pixso-paragraph-70_914 {
+  font-size: 18px;
+  font-family: "Noto Sans SC-SemiBold";
+  font-weight: 600;
+  text-align: right;
+  color: rgba(98, 169, 133, 1);
+  left: 50%;
+  transform: translateX(calc(-50% + 55.950683999999995px));
+  flex-grow: 0;
+}
+
+.Pixso-group-70_931,.Pixso-rectangle-70_885 {
+  width: 229px;
+  height: 62px;
+}
+
+.Pixso-group-70_931 {
+  left: 845.5px;
+  top: 853.972168px;
+}
+
+.Pixso-rectangle-70_885,.Pixso-paragraph-70_917 {
+  left: 50%;
+  transform: translateX(calc(-50% + 0px));
+}
+
+.Pixso-rectangle-70_885 {
+  bottom: 0px;
+  background-image: url("../../public/assets/images/pixso/alchemy/refinement-success/reference/53c5851e4c2c957b9a6591fbea6eccb8ba8853bb.png");
+}
+
+.Pixso-paragraph-70_917 {
+  font-size: 24px;
+  font-family: "SJ yuantijian-Z-Regular";
+  font-weight: 400;
+  text-align: center;
+  font-feature-settings: "locl" 0;
+  color: rgba(231, 201, 119, 1);
+  width: 96px;
+  height: auto;
+  bottom: 18.5px;
+}
+
+
+  </style>
+</head>
+<body>
+<div class="scroll-container">
+  <div id="0_1" class="Pixso-canvas-0_1">
+    <main id="70_583" class="alchemy-success-screen" aria-labelledby="70_898">
+      <div id="70_892" class="Pixso-rectangle-70_892"></div>
+      <div id="70_890" class="Pixso-rectangle-70_890"></div>
+      <div id="70_891" class="Pixso-rectangle-70_891"></div>
+      <button id="70_886" type="button" class="Pixso-rectangle-70_886" aria-label="返回丹房"></button>
+      <h1 id="70_898" class="Pixso-paragraph-70_898">炼丹成功</h1>
+      <p id="70_901" class="Pixso-paragraph-70_901">回灵丹 X1</p>
+      <p id="70_915" class="Pixso-paragraph-70_915">控火评分</p>
+      <p id="70_928" class="Pixso-paragraph-70_928">炉火既熄，丹香凝成</p>
+      <p id="70_916" class="Pixso-paragraph-70_916">58</p>
+      <p id="70_899" class="Pixso-paragraph-70_899">返回丹房</p>
+      <div id="70_887" class="Pixso-rectangle-70_887"></div>
+      <div id="70_906" class="Pixso-group-70_906">
+        <div id="70_888" class="Pixso-rectangle-70_888"></div>
+        <p id="70_904" class="Pixso-paragraph-70_904">温炉</p>
+        <p id="70_905" class="Pixso-paragraph-70_905">100%</p>
+      </div>
+      <div id="70_907" class="Pixso-group-70_907">
+        <div id="70_908" class="Pixso-rectangle-70_908"></div>
+        <p id="70_909" class="Pixso-paragraph-70_909">融药</p>
+        <p id="70_910" class="Pixso-paragraph-70_910">74%</p>
+      </div>
+      <div id="70_911" class="Pixso-group-70_911">
+        <div id="70_912" class="Pixso-rectangle-70_912"></div>
+        <p id="70_913" class="Pixso-paragraph-70_913">凝丹</p>
+        <p id="70_914" class="Pixso-paragraph-70_914">65%</p>
+      </div>
+      <div id="70_931" class="Pixso-group-70_931">
+        <div id="70_885" class="Pixso-rectangle-70_885"></div>
+        <p id="70_917" class="Pixso-paragraph-70_917">火候稳定</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<script>
+
+</script>
+
+</body>
+</html>

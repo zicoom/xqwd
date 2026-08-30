@@ -24,10 +24,11 @@ const CONTENT_RIGHT = 1803;
 
 /** 属性页仅负责展示；数值和配装摘要全部由 CharacterProfileService 提供。 */
 export class AttributePanel {
-  constructor({ scene, parent, profileService }) {
+  constructor({ scene, parent, profileService, portraitTextureKey = "player-dialogue-portrait" }) {
     this.scene = scene;
     this.parent = parent;
     this.profileService = profileService;
+    this.portraitTextureKey = portraitTextureKey;
     this.root = null;
   }
 
@@ -36,9 +37,9 @@ export class AttributePanel {
     this.root = scene.add.container(0, 0).setVisible(false);
     parent.add(this.root);
 
-    if (scene.textures.exists("player-dialogue-portrait")) {
+    if (scene.textures.exists(this.portraitTextureKey)) {
       // 立绘从导航下方开始，避免遮挡“属性”标签和顶部关闭按钮。
-      const portrait = scene.add.image(430, 1080, "player-dialogue-portrait").setOrigin(0.5, 1);
+      const portrait = scene.add.image(430, 1080, this.portraitTextureKey).setOrigin(0.5, 1);
       // 与储物袋等角色页共用同一立绘规格，保持原始 3:4 比例，不拉伸。
       portrait.setDisplaySize(660, 880);
       this.root.add(portrait);

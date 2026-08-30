@@ -17,6 +17,7 @@ export class StorageBagPanel {
       player: gameState.player,
       save: saveFirstChapterProgress,
     });
+    this.portraitTextureKey = services.portraitTextureKey || "player-dialogue-portrait";
     this.category = "全部";
     this.grade = "全部";
     this.scrollRow = 0;
@@ -88,7 +89,7 @@ export class StorageBagPanel {
     this.parent.add(this.storageLayer);
 
     // 主角立绘位于左侧底部，保持在资料卡的后方，不遮挡物品详情。
-    const playerPortrait = scene.add.image(430, 1080, "player-dialogue-portrait")
+    const playerPortrait = scene.add.image(430, 1080, this.portraitTextureKey)
       .setOrigin(0.5, 1)
       // 原图 720 × 960，按 0.9167 等比显示为 660 × 880，不能拉伸。
       .setDisplaySize(660, 880)

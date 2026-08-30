@@ -6,6 +6,14 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Noto Sans SC Battle Popup";
+  src: url("../public/assets/fonts/NotoSansSC-VariableFont_wght_2.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 /* 页面只负责承载游戏；水墨效果主要由 Phaser 场景绘制，避免依赖外部图片。 */
 :root {
   color-scheme: dark;

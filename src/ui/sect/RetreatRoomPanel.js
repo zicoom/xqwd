@@ -7,6 +7,23 @@ import { BreakthroughMinigamePanel } from "./BreakthroughMinigamePanel.js";
 const TITLE_FONT = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
 const UI_FONT = '"SJ yuantijian-C-Regular", "Microsoft YaHei", sans-serif';
 const BUTTON_FONT = '"SJ yuantijian-Z-Regular", "Microsoft YaHei", sans-serif';
+const RETREAT_ROOM_ASSET_ROOT = "./public/assets/images/pixso/retreat-room";
+const RETREAT_SUCCESS_ASSET_ROOT = `${RETREAT_ROOM_ASSET_ROOT}/study-success`;
+const RETREAT_ROOM_ASSETS = Object.freeze({
+  background: "pixso-retreat-room-background",
+  meditation: "pixso-retreat-room-meditation",
+  spellEntry: "pixso-retreat-room-spell-entry",
+  techniqueEntry: "pixso-retreat-room-technique-entry",
+  durationOption: "pixso-retreat-room-duration-option",
+  durationPanel: "pixso-retreat-room-duration-panel",
+  startButton: "pixso-retreat-room-start-button",
+  returnButton: "pixso-retreat-room-return-button",
+  roomPlaque: "pixso-retreat-room-plaque",
+  successDisc: "pixso-retreat-study-success-disc",
+  successSkillFrame: "pixso-retreat-study-success-skill-frame",
+  successDivider: "pixso-retreat-study-success-divider",
+  successDiamond: "pixso-retreat-study-success-diamond",
+});
 const COLORS = Object.freeze({
   navy: 0x070916,
   panel: 0x161d30,
@@ -20,8 +37,8 @@ const COLORS = Object.freeze({
 });
 
 const KIND_META = Object.freeze({
-  spell: { label: "法术", seal: "术", color: COLORS.blue },
-  technique: { label: "功法", seal: "功", color: COLORS.brown },
+  spell: { label: "法术", assetKey: RETREAT_ROOM_ASSETS.spellEntry, width: 244, height: 292 },
+  technique: { label: "功法", assetKey: RETREAT_ROOM_ASSETS.techniqueEntry, width: 243, height: 292 },
 });
 
 const GRADE_COLORS = Object.freeze({
@@ -39,7 +56,26 @@ const textStyle = (origin = 0.5, extra = {}) => ({
   ...extra,
 });
 
-/** 严格按 Pixso 页面 2 复刻的闭关室界面；规则和存档仍由领域服务负责。 */
+const formatRealm = (realm) => String(realm || "炼气初期").replace(/^炼气[·・]?/, "炼气·");
+
+/** 预加载 Pixso“改版 / 闭关室”画板的语义化素材。 */
+export function preloadRetreatRoomAssets(scene) {
+  scene.load.image(RETREAT_ROOM_ASSETS.background, `${RETREAT_ROOM_ASSET_ROOT}/background.jpg`);
+  scene.load.image(RETREAT_ROOM_ASSETS.meditation, `${RETREAT_ROOM_ASSET_ROOT}/meditating-cultivator.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.spellEntry, `${RETREAT_ROOM_ASSET_ROOT}/spell-entry.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.techniqueEntry, `${RETREAT_ROOM_ASSET_ROOT}/technique-entry.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.durationOption, `${RETREAT_ROOM_ASSET_ROOT}/duration-option.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.durationPanel, `${RETREAT_ROOM_ASSET_ROOT}/duration-panel.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.startButton, `${RETREAT_ROOM_ASSET_ROOT}/start-retreat-button.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.returnButton, `${RETREAT_ROOM_ASSET_ROOT}/return-sect-button.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.roomPlaque, `${RETREAT_ROOM_ASSET_ROOT}/room-plaque.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.successDisc, `${RETREAT_SUCCESS_ASSET_ROOT}/success-disc.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.successSkillFrame, `${RETREAT_SUCCESS_ASSET_ROOT}/skill-frame.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.successDivider, `${RETREAT_SUCCESS_ASSET_ROOT}/divider.png`);
+  scene.load.image(RETREAT_ROOM_ASSETS.successDiamond, `${RETREAT_SUCCESS_ASSET_ROOT}/continue-diamond.png`);
+}
+
+/** 严格按 Pixso“改版 / 闭关室”(70:1601)复刻；规则和存档仍由领域服务负责。 */
 export class RetreatRoomPanel {
   constructor(scene, { service, cultivationService, breakthroughService, breakthroughRules, sectName, onBack, onProgressChanged }) {
     this.scene = scene;
@@ -54,7 +90,6 @@ export class RetreatRoomPanel {
     this.selectedMonths = this.service.listDurations()[0]?.months || 12;
     this.meditationTimer = null;
     this.studyTimer = null;
-    this.successTimer = null;
     this.overlay = null;
     this.overlayMasks = [];
     this.overlayMode = "";
@@ -66,12 +101,11 @@ export class RetreatRoomPanel {
 
   drawBackground() {
     const scene = this.scene;
-    const hitArea = scene.add.rectangle(960, 540, 1920, 1080, COLORS.navy, 1).setInteractive();
-    const background = scene.add.image(960, 540, "pixso-retreat-background").setDisplaySize(1920, 1080);
-    const shade = scene.add.graphics();
-    shade.fillGradientStyle(0x192141, 0x192141, 0x070916, 0x070916, 0.84, 0.84, 0.96, 0.96);
-    shade.fillRect(0, 0, 1920, 1080);
-    this.root.add([hitArea, background, shade]);
+    const hitArea = scene.add.rectangle(960, 540, 1920, 1080, COLORS.navy, 0).setInteractive();
+    const background = scene.add.image(0, -0.5, RETREAT_ROOM_ASSETS.background)
+      .setOrigin(0)
+      .setDisplaySize(1920, 1081);
+    this.root.add([background, hitArea]);
   }
 
   renderMain(message = this.lastMessage) {
@@ -80,8 +114,11 @@ export class RetreatRoomPanel {
     this.content = this.scene.add.container(0, 0);
     this.root.add(this.content);
     this.cultivationFill = null;
+    this.cultivationProgressBar = null;
     this.cultivationValue = null;
     this.meditationFill = null;
+    this.meditationProgressBar = null;
+    this.meditationKnob = null;
     this.meditationCaption = null;
 
     const scene = this.scene;
@@ -92,64 +129,81 @@ export class RetreatRoomPanel {
     const atBottleneck = !active && cultivation.isFull;
     const breakthrough = atBottleneck ? this.breakthroughService?.getInfo?.() : null;
 
-    this.addMainText(960, 207, gameState.player.name, 30, "#eff2f7", { fontFamily: TITLE_FONT });
-    this.addMainText(960, 248, gameState.player.realm, 18, "#d9a942");
-    this.content.add(scene.add.rectangle(960, 281, 315, 16, 0x02050c, 0.9).setStrokeStyle(1, 0x445474));
-    this.cultivationFill = scene.add.rectangle(804, 281, 311, 12, 0x5389ee, 1).setOrigin(0, 0.5).setScale(progress, 1);
-    this.content.add(this.cultivationFill);
-    this.cultivationValue = this.addMainText(960, 303, `${cultivation.experience} / ${cultivation.target}`, 14, "#858da2");
+    this.content.add(scene.add.image(1671.25, 37, RETREAT_ROOM_ASSETS.roomPlaque)
+      .setOrigin(0)
+      .setDisplaySize(201, 156));
+    this.addMainText(1761.98, 70.5, "闭关室", 28, "#ddac4f", { fontFamily: BUTTON_FONT });
 
-    this.content.add(scene.add.image(960, 540, "pixso-retreat-meditation").setDisplaySize(500, 500));
-    this.drawKindButton(602, 546, "spell");
-    this.drawKindButton(1318, 546, "technique");
+    this.addMainText(957, 225.05, gameState.player.name, 38, "#ffffff", {
+      fontFamily: TITLE_FONT,
+      stroke: "#19130e",
+      strokeThickness: 3,
+    });
+    this.addMainText(959, 266.2, formatRealm(gameState.player.realm), 22, "#e1ba5b");
+    this.cultivationProgressBar = this.createRoundedProgressBar(this.content, {
+      x: 788.39,
+      y: 299.69,
+      width: 340,
+      height: 16,
+      progress,
+      trackColor: 0x0d1013,
+      trackAlpha: 0.96,
+      fillColor: 0xd7a13b,
+      borderColor: 0xc59846,
+      borderAlpha: 0.92,
+    });
+    this.cultivationFill = this.cultivationProgressBar.fill;
+    this.cultivationValue = this.addMainText(960, 321.45, `${cultivation.experience}/${cultivation.target}(${Math.round(progress * 100)}%)`, 18, "#c2bebb");
 
-    this.addMainText(960, 781, atBottleneck ? "修 为 圆 满" : `闭关 ${plan?.years || 1} 年`, 26, atBottleneck ? "#f2cc74" : "#e8edf7", { fontFamily: TITLE_FONT });
-    this.addMainText(960, 822, atBottleneck
+    this.content.add(scene.add.image(708, 311.5, RETREAT_ROOM_ASSETS.meditation)
+      .setOrigin(0)
+      .setDisplaySize(500, 500));
+    this.drawKindButton(574, 598.25, "spell");
+    this.drawKindButton(1343.73, 598.25, "technique");
+
+    this.content.add(scene.add.image(630.5, 750.8, RETREAT_ROOM_ASSETS.durationPanel)
+      .setOrigin(0)
+      .setDisplaySize(640, 167));
+
+    this.addMainText(954.5, 781.4, atBottleneck ? "修 为 圆 满" : `闭关  ${plan?.years || 1}  年`, 26, atBottleneck ? "#f2cc74" : "#ffffff", { fontFamily: TITLE_FONT });
+    this.meditationCaption = this.addMainText(951.5, 815.77, atBottleneck
       ? `当前瓶颈：${breakthrough?.realm || gameState.player.realm} · 可冲击 ${breakthrough?.nextRealm || "下一境界"}`
       : active
         ? `已获得：+${active.gainedExp} / ${active.totalExp} 修为`
-        : `获得：+${plan?.totalExp || 0} 修为`, 17, "#e6bd54");
+        : `获得:+${plan?.totalExp || 0}修为`, 18, "#efc666");
     if (atBottleneck) this.drawBreakthroughHint(breakthrough);
     else this.drawDurationControl(plan, active);
 
     const state = this.cultivationService.getState();
-    this.addMainText(960, 942, atBottleneck
+    this.addMainText(960, 935.21, atBottleneck
       ? "修为已至瓶颈，突破后将重新积累下一阶段修为。"
       : active
       ? `吐纳进行中 · 剩余约 ${Math.ceil(active.remainingMs / 1000)} 秒`
-      : `★ 累计闭关 ${this.formatMonths(state.totalMonths)}，闭关越久修为越丰厚`, 14, "#b7a05f");
-    this.makeButton(this.content, 960, 990, 200, 55, active ? "提前出关" : atBottleneck ? "突破修为" : "开始闭关", () => {
+      : `闭关${plan?.years || 1}年后即可积累修为 · 累计闭关${this.formatMonths(state.totalMonths)}`, 16, "#d8a963");
+
+    const startButton = this.makeTextureButton(this.content, 952.51, 1018.86, RETREAT_ROOM_ASSETS.startButton, 350, 134,
+      active ? "提前出关" : atBottleneck ? "突破修为" : "开始闭关", () => {
       if (active) this.abortCultivationRetreat();
       else if (atBottleneck) this.startBreakthrough();
       else this.startCultivationRetreat();
     }, {
-      fontSize: 20,
+      labelY: -29.36,
+      fontSize: 24,
       fontFamily: BUTTON_FONT,
-      textColor: "#ffffff",
-      fill: atBottleneck ? 0x7a5524 : 0x4162ae,
-      hoverFill: atBottleneck ? 0x9b7130 : 0x4c6fbd,
-      strokeWidth: 0,
-      radius: 12,
+      textColor: "#4d3214",
+      stroke: "#e8cc85",
+      strokeThickness: 1,
+      hitHeight: 70,
+      hitY: -31,
     });
+    if (active) startButton.setAlpha(0.94);
 
-    this.makeButton(this.content, 1762, 991, 185, 55, "离开闭关室", () => this.close(), {
-      fontSize: 18,
+    this.makeTextureButton(this.content, 1734.25, 985.21, RETREAT_ROOM_ASSETS.returnButton, 276, 81, "返回门派", () => this.close(), {
+      labelX: -6,
+      labelY: -5,
+      fontSize: 22,
       fontFamily: BUTTON_FONT,
-      textColor: "#b2cbf7",
-      gradient: [0x27384b, 0x151d26],
-      hoverGradient: [0x31465d, 0x1b2632],
-      stroke: 0x485971,
-      strokeWidth: 2,
-      radius: 10,
-    });
-    this.makeButton(this.content, 1804, 80, 120, 64, "闭关室", () => {}, {
-      fontSize: 20,
-      textColor: "#ecc87c",
-      fill: 0x33271a,
-      hoverFill: 0x33271a,
-      stroke: 0x6d625a,
-      strokeWidth: 2,
-      radius: 10,
+      textColor: "#ddac4f",
     });
 
     if (message) this.showToast(message, 960, 1038, this.content, 2500);
@@ -160,57 +214,66 @@ export class RetreatRoomPanel {
     const scene = this.scene;
     const durations = this.service.listDurations();
     const selectedIndex = Math.max(0, durations.findIndex((entry) => entry.months === (plan?.months || this.selectedMonths)));
-    const barX = 802;
-    const barWidth = 315;
-    this.content.add(scene.add.rectangle(960, 851, barWidth, 12, 0x11182a, 1).setStrokeStyle(1, 0x45577c));
+    const barX = 690.26;
+    const barY = 845.9;
+    const barWidth = 525;
     const ratio = active?.progress ?? (selectedIndex / Math.max(1, durations.length - 1));
-    this.meditationFill = scene.add.rectangle(barX, 851, barWidth, 12, 0x5389ee, 1).setOrigin(0, 0.5).setScale(ratio, 1);
-    this.content.add(this.meditationFill);
-    this.content.add(scene.add.circle(barX + barWidth * ratio, 851, 12, 0xf5f7ff, 1).setStrokeStyle(3, 0x72a1f1));
+    this.meditationBarX = barX;
+    this.meditationBarWidth = barWidth;
+    this.meditationProgressBar = this.createRoundedProgressBar(this.content, {
+      x: barX,
+      y: barY,
+      width: barWidth,
+      height: 14,
+      progress: ratio,
+      trackColor: 0x101214,
+      trackAlpha: 0.96,
+      fillColor: 0x4b7eb4,
+      borderColor: 0xc49a52,
+      borderAlpha: 0.9,
+    });
+    this.meditationFill = this.meditationProgressBar.fill;
+    this.meditationKnob = scene.add.circle(barX + barWidth * ratio, barY, 10, 0xf5f7ff, 1).setStrokeStyle(3, 0x72a1f1);
+    this.content.add(this.meditationKnob);
 
-    const xs = [863, 930, 1002, 1074];
+    const xs = [777.51, 900.51, 1023.51, 1146.52];
     durations.forEach((duration, index) => {
       const selected = duration.months === (plan?.months || this.selectedMonths);
-      this.makeButton(this.content, xs[index], 900, 58, 42, duration.label, () => {
+      const option = this.makeTextureButton(this.content, xs[index], 898.41, RETREAT_ROOM_ASSETS.durationOption, 108, 47, duration.label, () => {
         if (active) return;
         this.selectedMonths = duration.months;
         this.renderMain("");
       }, {
-        fontSize: 16,
-        textColor: selected ? "#d0dbe6" : "#a5b3d8",
-        fill: selected ? 0x708ac6 : 0x1d2337,
-        fillAlpha: selected ? 0.3 : 1,
-        hoverFill: selected ? 0x708ac6 : 0x263553,
-        hoverFillAlpha: selected ? 0.42 : 1,
-        stroke: 0x708ac6,
-        strokeWidth: selected ? 2 : 0,
-        radius: 8,
+        fontSize: 22,
+        fontFamily: UI_FONT,
+        textColor: selected ? "#f6dda0" : "#ffffff",
+        tint: selected ? 0xffe3a0 : null,
       });
+      if (active) option.setAlpha(0.64);
     });
   }
 
   /** 满修为时替代时长控件，避免让玩家误以为还可以继续累积经验。 */
   drawBreakthroughHint(breakthrough) {
-    const scene = this.scene;
-    this.addRoundedPanel(this.content, 960, 851, 315, 54, 10, 0x211a16, 0.92, 0x9d7835, 1);
-    this.addMainText(960, 851, breakthrough?.nextRealm
+    this.addMainText(960, 852, breakthrough?.nextRealm
       ? `冲击 ${breakthrough.nextRealm}`
-      : "当前境界后续未开放", 18, "#f0ca71");
-    this.addMainText(960, 900, "突破后继续修行", 15, "#a9a2a0");
+      : "当前境界后续未开放", 22, "#f0ca71");
+    this.addMainText(960, 892, "突破后继续修行", 16, "#c5b59c");
   }
 
   drawKindButton(x, y, kind) {
     const meta = KIND_META[kind];
     const scene = this.scene;
-    const circle = scene.add.circle(x, y, 67.5, meta.color, 0.96)
-      .setStrokeStyle(3, 0x8fb4ed, 0.85)
-      .setInteractive({ useHandCursor: true });
-    this.content.add(circle);
-    this.addMainText(x, y - 14, meta.seal, 42, "#eef3fb", { fontFamily: TITLE_FONT });
-    this.addMainText(x, y + 43, meta.label, 20, "#aeb7ca");
-    circle.on("pointerover", () => circle.setFillStyle(meta.color, 1).setScale(1.04));
-    circle.on("pointerout", () => circle.setFillStyle(meta.color, 0.96).setScale(1));
-    circle.on("pointerdown", () => {
+    const entry = scene.add.container(x, y);
+    const image = scene.add.image(0, 0, meta.assetKey).setDisplaySize(meta.width, meta.height);
+    const hit = scene.add.rectangle(0, 0, meta.width, meta.height, 0xffffff, 0).setInteractive({ useHandCursor: true });
+    const label = this.makeTextObject(kind === "spell" ? 6 : 3, -22, meta.label, 40,
+      kind === "spell" ? "#f6e6d1" : "#eeca8a", { fontFamily: TITLE_FONT });
+    entry.add([image, hit, label]);
+    this.content.add(entry);
+    hit.on("pointerover", () => entry.setScale(1.025));
+    hit.on("pointerout", () => entry.setScale(1));
+    hit.on("pointerdown", () => {
       playUiClickSound(scene);
       if (this.cultivationService.getActiveMeditation()) {
         this.renderMain("请先结束正在进行的清修闭关。");
@@ -340,21 +403,60 @@ export class RetreatRoomPanel {
     const scene = this.scene;
     const overlay = scene.add.container(0, 0).setDepth(1200);
     this.overlay = overlay;
-    overlay.add(scene.add.rectangle(960, 540, 1920, 1080, 0x000000, 0.8).setInteractive());
+    const blocker = scene.add.rectangle(0, 0, 1920, 1080, 0x000000, 0.5)
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
+    overlay.add(blocker);
+
+    // Pixso“闭关室-参悟成功”(70:1896) 的中央墨金圆环与装饰均使用原始像素尺寸。
+    overlay.add(scene.add.image(518, 131, RETREAT_ROOM_ASSETS.successDisc)
+      .setOrigin(0)
+      .setDisplaySize(874, 771));
+
     const successKey = result.study.id === "study-huoqiu"
       ? "pixso-retreat-success-huoqiu"
       : "pixso-retreat-book-bengshan";
-    const successImage = scene.add.image(960, 398, successKey).setDisplaySize(139, 139);
+    const successImage = scene.add.image(963.73, 427.21, successKey).setDisplaySize(170, 170);
     const successMaskShape = scene.make.graphics({ x: 0, y: 0, add: false });
     successMaskShape.fillStyle(0xffffff, 1);
-    successMaskShape.fillRoundedRect(890.5, 328.5, 139, 139, 20);
+    successMaskShape.fillRoundedRect(878.73, 342.21, 170, 170, 20);
     successImage.setMask(successMaskShape.createGeometryMask());
     this.overlayMasks.push(successMaskShape);
     overlay.add(successImage);
-    this.addOverlayText(960, 528, "参悟成功！", 52, "#ffd10c", { fontFamily: TITLE_FONT });
-    this.addOverlayText(960, 613, `领悟了[${result.study.name}]第一层`, 30, "#bca877");
-    this.successTimer = scene.time.delayedCall(3000, () => {
-      this.successTimer = null;
+
+    overlay.add(scene.add.image(865, 335.5, RETREAT_ROOM_ASSETS.successSkillFrame)
+      .setOrigin(0)
+      .setDisplaySize(190, 181));
+    this.addOverlayText(956, 565.25, "参悟成功", 58, "#ddac4f", {
+      fontFamily: TITLE_FONT,
+      stroke: "#000000",
+      strokeThickness: 1,
+    });
+    this.addOverlayText(960, 625.25, `领悟了《${result.study.name}》第一层`, 30, "#eeca8a", {
+      fontFamily: UI_FONT,
+      stroke: "#000000",
+      strokeThickness: 1,
+    });
+    overlay.add(scene.add.image(736, 666.36, RETREAT_ROOM_ASSETS.successDivider)
+      .setOrigin(0)
+      .setDisplaySize(448, 22));
+    overlay.add(scene.add.image(827, 722.8, RETREAT_ROOM_ASSETS.successDiamond)
+      .setOrigin(0)
+      .setDisplaySize(25, 24));
+    overlay.add(scene.add.image(1068, 722.8, RETREAT_ROOM_ASSETS.successDiamond)
+      .setOrigin(0)
+      .setDisplaySize(25, 24));
+    this.addOverlayText(960, 732.3, "点击任意位置继续", 24, "#e7c977", {
+      fontFamily: BUTTON_FONT,
+      stroke: "#000000",
+      strokeThickness: 1,
+    });
+
+    let dismissed = false;
+    blocker.on("pointerdown", () => {
+      if (dismissed) return;
+      dismissed = true;
+      playUiClickSound(scene);
       this.destroyOverlay({ keepStudy: true });
       this.renderMain(`${result.study.name}已铭刻于心，修为 +${result.gainedExp}。`);
     });
@@ -405,14 +507,16 @@ export class RetreatRoomPanel {
     }
     this.onProgressChanged?.();
     const cultivation = getCultivationProgress(gameState.player);
-    this.cultivationFill?.setScale(Math.min(1, cultivation.experience / Math.max(1, cultivation.target)), 1);
-    this.cultivationValue?.setText(`${cultivation.experience} / ${cultivation.target}`);
+    const cultivationRatio = Math.min(1, cultivation.experience / Math.max(1, cultivation.target));
+    this.cultivationProgressBar?.setProgress(cultivationRatio);
+    this.cultivationValue?.setText(`${cultivation.experience}/${cultivation.target}(${Math.round(cultivationRatio * 100)}%)`);
     if (result.completed || result.capped) {
       this.stopMeditationTimer();
       this.renderMain(result.message);
       return;
     }
-    this.meditationFill?.setScale(result.progress, 1);
+    this.meditationProgressBar?.setProgress(result.progress);
+    this.meditationKnob?.setX(this.meditationBarX + this.meditationBarWidth * result.progress);
     this.meditationCaption?.setText?.(`已获得：+${result.gainedExp} / ${result.totalExp} 修为`);
   }
 
@@ -427,7 +531,6 @@ export class RetreatRoomPanel {
   addMainText(x, y, value, size, color, extra = {}) {
     const object = this.makeTextObject(x, y, value, size, color, extra);
     this.content.add(object);
-    if (y === 822) this.meditationCaption = object;
     return object;
   }
 
@@ -441,6 +544,53 @@ export class RetreatRoomPanel {
     return addText(this.scene, x, y, value, size, color, textStyle(extra.origin ?? 0.5, extra));
   }
 
+  createRoundedProgressBar(parent, {
+    x,
+    y,
+    width,
+    height,
+    progress = 0,
+    trackColor,
+    trackAlpha = 1,
+    fillColor,
+    fillAlpha = 1,
+    borderColor,
+    borderAlpha = 1,
+    borderWidth = 1,
+    inset = 2,
+  }) {
+    const track = this.scene.add.graphics();
+    const radius = height / 2;
+    track.fillStyle(trackColor, trackAlpha);
+    track.fillRoundedRect(x, y - height / 2, width, height, radius);
+    if (borderColor !== undefined && borderWidth > 0) {
+      track.lineStyle(borderWidth, borderColor, borderAlpha);
+      track.strokeRoundedRect(x, y - height / 2, width, height, radius);
+    }
+
+    const fill = this.scene.add.graphics();
+    const innerHeight = Math.max(1, height - inset * 2);
+    const innerWidth = Math.max(1, width - inset * 2);
+    const setProgress = (value) => {
+      const ratio = Phaser.Math.Clamp(Number(value) || 0, 0, 1);
+      const fillWidth = innerWidth * ratio;
+      fill.clear();
+      if (fillWidth <= 0) return;
+      fill.fillStyle(fillColor, fillAlpha);
+      fill.fillRoundedRect(
+        x + inset,
+        y - innerHeight / 2,
+        fillWidth,
+        innerHeight,
+        Math.min(innerHeight / 2, fillWidth / 2),
+      );
+    };
+
+    parent.add([track, fill]);
+    setProgress(progress);
+    return { track, fill, setProgress };
+  }
+
   addRoundedPanel(parent, x, y, width, height, radius, fill, alpha = 1, stroke = null, strokeWidth = 0) {
     const graphics = this.scene.add.graphics();
     graphics.fillStyle(fill, alpha);
@@ -451,6 +601,46 @@ export class RetreatRoomPanel {
     }
     parent.add(graphics);
     return graphics;
+  }
+
+  /** 使用 Pixso 原图作为按钮外观，文字和命中区仍保持动态与可测试。 */
+  makeTextureButton(parent, x, y, textureKey, width, height, label, callback, options = {}) {
+    const scene = this.scene;
+    const container = scene.add.container(x, y);
+    const image = scene.add.image(0, 0, textureKey).setDisplaySize(width, height);
+    if (options.tint !== null && options.tint !== undefined) image.setTint(options.tint);
+    const hit = scene.add.rectangle(
+      options.hitX ?? 0,
+      options.hitY ?? 0,
+      options.hitWidth ?? width,
+      options.hitHeight ?? height,
+      0xffffff,
+      0,
+    ).setInteractive({ useHandCursor: true });
+    const title = this.makeTextObject(
+      options.labelX ?? 0,
+      options.labelY ?? 0,
+      label,
+      options.fontSize ?? 18,
+      options.textColor ?? "#f4d889",
+      {
+        fontFamily: options.fontFamily ?? UI_FONT,
+        stroke: options.stroke,
+        strokeThickness: options.strokeThickness ?? 0,
+      },
+    );
+    container.add([image, hit, title]);
+    parent.add(container);
+    hit.on("pointerover", () => image.setTint(options.hoverTint ?? 0xffedc5));
+    hit.on("pointerout", () => {
+      if (options.tint !== null && options.tint !== undefined) image.setTint(options.tint);
+      else image.clearTint();
+    });
+    hit.on("pointerdown", () => {
+      playUiClickSound(scene);
+      callback();
+    });
+    return container;
   }
 
   makeButton(parent, x, y, width, height, label, callback, options = {}) {
@@ -520,8 +710,6 @@ export class RetreatRoomPanel {
 
   destroyOverlay({ keepStudy = false } = {}) {
     this.stopStudyTimer();
-    this.successTimer?.remove(false);
-    this.successTimer = null;
     this.overlay?.destroy(true);
     this.overlayMasks.forEach((mask) => mask.destroy());
     this.overlayMasks = [];

@@ -38,9 +38,10 @@ const SECTS = Object.freeze([
       ]),
     }),
     members: Object.freeze([
-      Object.freeze({ name: "执剑长老", realm: "金丹期", role: "传功" }),
-      Object.freeze({ name: "炼丹执事", realm: "筑基期", role: "丹房" }),
-      Object.freeze({ name: "守山弟子", realm: "炼气后期", role: "接引" }),
+      Object.freeze({ name: "执剑长老", seal: "执", realm: "金丹期", role: "传功" }),
+      Object.freeze({ name: "炼丹执事", seal: "炼", realm: "筑基期", role: "丹房" }),
+      Object.freeze({ name: "任务堂", seal: "任", realm: "筑基中期", role: "任务" }),
+      Object.freeze({ name: "守山弟子", seal: "守", realm: "炼气后期", role: "接引" }),
     ]),
     features: Object.freeze([
       Object.freeze({ id: "alchemy", label: "炼丹房", seal: "丹", description: "炼制丹药、查看丹方与宗门丹炉。", enabled: true }),

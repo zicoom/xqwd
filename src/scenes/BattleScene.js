@@ -1,12 +1,18 @@
 import { gameState, saveFirstChapterProgress } from "../core/GameState.js";
 import { SceneKeys } from "../core/SceneKeys.js";
-import { addButton, addText } from "../utils/UiHelpers.js";
+import { addText } from "../utils/UiHelpers.js";
 import { configureFullHdScene } from "../core/DisplayConfig.js";
 import { ItemCatalog } from "../domain/items/ItemCatalog.js";
 import { SpellService } from "../domain/spells/SpellService.js";
 import { CombatEngine, calculatePlayerInitiative } from "../domain/combat/CombatEngine.js";
 import { BattleRewardService } from "../domain/rewards/BattleRewardService.js";
 import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
+import { getMapObjects } from "../core/MapContentStore.js";
+import { getMonsterTemplate } from "../core/MonsterStore.js";
+import { clearSceneResumeRoute, rememberBattleRoute } from "../core/SceneResumeState.js";
+import { XianxiaDialog } from "../ui/XianxiaDialog.js";
+import { BattleHud } from "../ui/battle/BattleHud.js";
+import { BattleResultDialog, preloadBattleResultDialogAssets } from "../ui/battle/BattleResultDialog.js";
 import {
   ChapterQuestService,
   QINGYUN_INVESTIGATION_ID,
@@ -26,6 +32,28 @@ const ADVENTURE_BATTLES = Object.freeze({
   },
 });
 
+/** 用会话中保存的稳定编号重新装配地图怪物，不把图片和整份模板写入 sessionStorage。 */
+function restoreMapMonster({ mapId, mapMonsterId, monsterTemplateId } = {}) {
+  if (!mapMonsterId) return null;
+  const object = getMapObjects(mapId || "qingyun-mountain")
+    .find((candidate) => candidate.id === mapMonsterId);
+  const templateId = object?.monsterTemplateId || monsterTemplateId;
+  const template = templateId ? getMonsterTemplate(templateId) : null;
+  if (object) {
+    if (template) Object.assign(object, { name: template.name, battle: template, drops: template.drops });
+    return object;
+  }
+  if (!template) return null;
+  return {
+    id: mapMonsterId,
+    type: "monster",
+    name: template.name,
+    monsterTemplateId: templateId,
+    battle: template,
+    drops: template.drops,
+  };
+}
+
 /**
  * 第一章基础回合战斗。
  * 本场景使用用户提供 .pix 设计工程提取的背景、角色、五行法盘素材。
@@ -38,16 +66,42 @@ export class BattleScene extends Phaser.Scene {
    * 没有传入时仍然使用第一章固定劫修，保证原主线战斗不受影响。
    */
   init(data = {}) {
-    this.mapMonster = data.mapMonster || null;
+    this.mapId = data.mapId || (data.mapMonster ? "qingyun-mountain" : "");
+    this.mapMonster = data.mapMonster || (data.resumeBattle ? restoreMapMonster(data) : null);
     this.adventureBattle = ADVENTURE_BATTLES[data.adventureBattle] ? data.adventureBattle : null;
     // 从奇异玉光进入的测试战斗允许随时返回，而且返回后恢复状态，方便反复测试。
     this.isTestBattle = Boolean(data.testBattle);
+    this.battleResumeData = {
+      resumeBattle: true,
+      testBattle: this.isTestBattle,
+      adventureBattle: this.adventureBattle || "",
+      mapId: this.mapId,
+      mapMonsterId: this.mapMonster?.id || data.mapMonsterId || "",
+      monsterTemplateId: this.mapMonster?.monsterTemplateId || data.monsterTemplateId || "",
+    };
   }
 
   preload() {
     this.load.image("battle-mountain-background", "./public/assets/images/battle/battle-mountain-background.png");
     this.load.image("battle-swordsman", "./public/assets/images/battle/swordsman.png");
     this.load.image("battle-five-elements-disc", "./public/assets/images/battle/five-elements-disc.png");
+    preloadBattleResultDialogAssets(this);
+    // Pixso“新战斗界面”导出的原尺寸 UI 素材。
+    const uiRoot = "./public/assets/images/battle/new-ui";
+    this.load.image("battle-ui-action-deck", `${uiRoot}/action-deck-panel.png`);
+    this.load.image("battle-ui-action-key-label", `${uiRoot}/action-key-label.png`);
+    this.load.image("battle-ui-action-slot", `${uiRoot}/action-slot.png`);
+    this.load.image("battle-ui-action-slot-selected", `${uiRoot}/action-slot-selected.png`);
+    this.load.image("battle-ui-log-scroll", `${uiRoot}/battle-log-scroll.png`);
+    this.load.image("battle-ui-button-dark", `${uiRoot}/button-dark.png`);
+    this.load.image("battle-ui-button-green", `${uiRoot}/button-green.png`);
+    this.load.image("battle-ui-five-elements-frame", `${uiRoot}/five-elements-frame.png`);
+    this.load.image("battle-ui-round-header", `${uiRoot}/round-header.png`);
+    this.load.image("battle-ui-skill-fireburst", `${uiRoot}/skill-fireburst.png`);
+    this.load.image("battle-ui-status-bar", `${uiRoot}/status-bar-frame.png`);
+    ["metal", "wood", "water", "fire", "wind", "ice", "dark", "lightning"].forEach((element) => {
+      this.load.image(`battle-ui-element-${element}`, `${uiRoot}/element-${element}.png`);
+    });
     // 用户要求完整播放原始动作，因此双方各加载连续的 153 帧，不再抽帧。
     // 角色已经缩小，显存压力比先前大模型时低；如果未来素材更多，再改为图集优化而不是跳帧。
     this.animationFrameCount = 153;
@@ -60,6 +114,11 @@ export class BattleScene extends Phaser.Scene {
 
   create() {
     configureFullHdScene(this);
+    // 战斗进行期间保留来源编号，F5 后由 BootScene 从同一场战斗开头安全重建。
+    rememberBattleRoute({
+      ...this.battleResumeData,
+      saveSlot: gameState.activeSaveSlot,
+    });
     this.itemCatalog = new ItemCatalog();
     this.spellService = new SpellService({ player: gameState.player, catalog: this.itemCatalog });
     this.rewardService = new BattleRewardService({
@@ -96,16 +155,28 @@ export class BattleScene extends Phaser.Scene {
     });
     this.enemy = this.combat.enemy;
     this.drawBattlefield();
-    this.createStatusBars();
-    this.createActionDeck();
-    this.createBattleLog();
+    this.battleHud = new BattleHud(this, {
+      onNormalAttack: () => this.normalAttack(),
+      onSkill: () => this.useSkill(),
+      onDefend: () => this.defend(),
+      onEscape: () => this.returnToVillage(),
+      onEnd: () => this.handleEndButton(),
+    }).create({
+      playerName: gameState.player.name,
+      enemyName: this.enemy.name,
+      skillName: this.getSkillName(),
+    });
     this.startBattleFrameAnimations();
     // 快捷栏既可鼠标点击，也可直接按数字键 1、2、3 使用。
     this.input.keyboard.on("keydown-ONE", () => this.normalAttack());
     this.input.keyboard.on("keydown-TWO", () => this.useSkill());
     this.input.keyboard.on("keydown-THREE", () => this.defend());
-    // Esc 是返回地图的备用操作，鼠标按钮失效时也能安全离开战斗。
-    this.input.keyboard.on("keydown-ESC", () => this.returnToVillage());
+    // Esc 是备用出口；结算弹窗打开时遵循弹窗对应的目标，避免绕过章节结算页。
+    this.input.keyboard.on("keydown-ESC", () => {
+      if (this.victoryDialog?.isOpen) this.continueAfterVictory();
+      else if (this.defeatDialog?.isOpen) this.returnAfterDefeat();
+      else this.returnToVillage();
+    });
     this.updateBattleUi();
     // 只有敌方先手时，才在战场初始化完成后自动开始第一回合。
     if (this.combat.turn === "enemy") this.time.delayedCall(650, () => this.enemyTurn());
@@ -119,22 +190,12 @@ export class BattleScene extends Phaser.Scene {
     // 新主角战斗帧的原始尺寸是 720×720（正方形）。必须等宽等高显示，
     // 否则会像旧素材一样被纵向拉伸，人物比例就会不自然。
     // 280 是屏幕中的显示大小；以后换角色只要读取素材比例再修改这里即可。
-    this.playerAvatar = this.add.image(285, 668, "battle-player-001").setOrigin(0.5, 1).setDisplaySize(420, 420);
-    this.enemyAvatar = this.add.image(1620, 668, "battle-spider-001").setOrigin(0.5, 1).setDisplaySize(443, 443);
+    // 坐标和显示框严格对应 Pixso 1920×1080 画板中的“左边角色”和敌方立绘图层。
+    this.playerAvatar = this.add.image(84, 211, "battle-player-001").setOrigin(0, 0).setDisplaySize(337, 413.32);
+    this.enemyAvatar = this.add.image(1371.89, 231.63, "battle-spider-001").setOrigin(0, 0).setDisplaySize(456.77, 392.69);
     this.loadCustomEnemyPortrait();
-    this.add.ellipse(285, 675, 255, 33, 0x17221e, 0.27);
-    this.add.ellipse(1620, 675, 285, 36, 0x17221e, 0.27);
-    this.roundText = addText(this, 960, 63, "第 1 回合", 51, "#fff1c6", { origin: 0.5, strokeThickness: 9 });
-    this.turnHint = addText(this, 960, 125, "你的回合 · 请选择行动", 27, "#d9ebdc", { origin: 0.5, strokeThickness: 5 });
-    addText(this, 285, 282, gameState.player.name, 29, "#fff6da", { origin: 0.5 });
-    addText(this, 1620, 282, this.enemy.name, 29, "#ffe0d7", { origin: 0.5 });
-    // 返回按钮额外有一层较大的透明点击范围；全屏缩放时点文字或边缘也能触发。
-    this.returnMapButton = addButton(this, 1740, 138, 255, "返回青云山", () => this.returnToVillage(), { height: 57, size: 23 }).setDepth(200);
-    this.returnMapHitArea = this.add.zone(1740, 138, 330, 96)
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(201);
-    this.returnMapHitArea.on("pointerdown", () => this.returnToVillage());
+    this.add.ellipse(252.5, 631, 280, 30, 0x17221e, 0.24);
+    this.add.ellipse(1600, 631, 330, 34, 0x17221e, 0.24);
   }
 
   /**
@@ -170,10 +231,19 @@ export class BattleScene extends Phaser.Scene {
     if (!imageData) return;
     const textureKey = getMonsterAppearanceTextureKey(this.mapMonster.battle, "battle-monster-custom");
     const applyTexture = () => {
-      // 图片可能是方形或竖图；先限制在 280×280 范围内，再按原比例缩放。
+      // 自定义图片按 Pixso 敌方角色框等比适配，并与角色脚底对齐。
       const source = this.textures.get(textureKey).getSourceImage();
-      const scale = Math.min(420 / source.width, 420 / source.height);
-      if (this.enemyAvatar?.active) this.enemyAvatar.setTexture(textureKey).setDisplaySize(source.width * scale, source.height * scale).clearTint();
+      const frame = { x: 1371.89, y: 231.63, width: 456.77, height: 392.69 };
+      const scale = Math.min(frame.width / source.width, frame.height / source.height);
+      const width = source.width * scale;
+      const height = source.height * scale;
+      if (this.enemyAvatar?.active) {
+        this.enemyAvatar
+          .setTexture(textureKey)
+          .setPosition(frame.x + (frame.width - width) / 2, frame.y + frame.height - height)
+          .setDisplaySize(width, height)
+          .clearTint();
+      }
     };
     if (this.textures.exists(textureKey)) applyTexture();
     else {
@@ -186,72 +256,32 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** 绘制双方生命、灵气条；长度会随数值实时变化。 */
-  createStatusBars() {
-    this.playerBars = this.createBars(83, 708, 450, "left");
-    this.enemyBars = this.createBars(1388, 708, 450, "right");
-  }
-
-  createBars(x, y, width, direction) {
-    const isRight = direction === "right";
-    const startX = isRight ? x + width : x;
-    this.add.rectangle(startX, y, width, 36, 0x2e1a17, 0.9).setOrigin(isRight ? 1 : 0, 0).setStrokeStyle(2, 0xffb078);
-    this.add.rectangle(startX, y + 47, width, 30, 0x18334a, 0.9).setOrigin(isRight ? 1 : 0, 0).setStrokeStyle(2, 0x70b8eb);
-    const hpFill = this.add.rectangle(startX, y, width, 36, 0xd52a1a, 1).setOrigin(isRight ? 1 : 0, 0);
-    const qiFill = this.add.rectangle(startX, y + 47, width, 30, 0x237fca, 1).setOrigin(isRight ? 1 : 0, 0);
-    const hpText = addText(this, x + width / 2, y + 3, "", 23, "#ffffff", { origin: 0.5, strokeThickness: 3 });
-    const qiText = addText(this, x + width / 2, y + 48, "", 21, "#ffffff", { origin: 0.5, strokeThickness: 3 });
-    return { hpFill, qiFill, hpText, qiText, width };
-  }
-
-  /** 左下角 1～9 快捷栏的第一版：前三格放入普通攻击、术法、防御。 */
-  createActionDeck() {
-    this.add.rectangle(323, 924, 615, 281, 0x1b2927, 0.94).setStrokeStyle(5, 0xae8955);
-    this.createActionCard(141, 855, "1", "普通攻击", "不耗灵气", () => this.normalAttack());
-    this.createActionCard(330, 855, "2", this.getSkillName(), "消耗 8 灵气", () => this.useSkill());
-    this.createActionCard(519, 855, "3", "防御", "减伤并回灵气", () => this.defend());
-    for (let index = 0; index < 3; index += 1) {
-      this.add.rectangle(141 + index * 189, 1007, 162, 102, 0x14201f, 0.62).setStrokeStyle(2, 0x79694e, 0.7);
-      addText(this, 141 + index * 189, 1007, "空", 23, "#87918a", { origin: 0.5, strokeThickness: 2 });
-    }
-    this.add.image(915, 912, "battle-five-elements-disc").setScale(0.3075);
-    this.discQiText = addText(this, 915, 912, "", 41, "#5a4324", { origin: 0.5, strokeThickness: 2, align: "center" });
-  }
-
-  createActionCard(x, y, key, name, detail, onClick) {
-    const background = this.add.rectangle(x, y, 162, 123, 0x20302d, 0.97).setStrokeStyle(3, 0xc59c5c).setInteractive({ useHandCursor: true });
-    addText(this, x - 63, y - 47, key, 23, "#c9b989", { origin: 0.5, strokeThickness: 2 });
-    addText(this, x, y - 14, name, 24, "#fff0c4", { origin: 0.5, strokeThickness: 3, wordWrap: { width: 150 } });
-    addText(this, x, y + 41, detail, 18, "#b8d7c4", { origin: 0.5, strokeThickness: 2, wordWrap: { width: 150 } });
-    background.on("pointerover", () => background.setFillStyle(0x3a5148));
-    background.on("pointerout", () => background.setFillStyle(0x20302d));
-    background.on("pointerdown", onClick);
-  }
-
-  /** 右下角记录区域，显示最近的战斗结果。 */
-  createBattleLog() {
-    this.add.rectangle(1583, 924, 548, 275, 0xf0e5d5, 0.94).setStrokeStyle(5, 0x9a7955);
-    this.logText = addText(this, 1328, 822, "", 23, "#553d36", { wordWrap: { width: 495 }, lineSpacing: 11, strokeThickness: 0 });
-  }
-
   getSkillName() {
     return this.spellService.getInnateSpell().name;
   }
 
   /** 刷新生命、灵气、回合和法盘中央数值。 */
   updateBattleUi() {
-    this.updateBars(this.playerBars, gameState.player.hp, gameState.player.maxHp, gameState.player.qi, gameState.player.maxQi);
-    this.updateBars(this.enemyBars, this.enemy.hp, this.enemy.maxHp, this.enemy.qi, this.enemy.maxQi);
-    this.roundText.setText(`第 ${this.combat.round} 回合`);
-    this.turnHint.setText(this.combat.battleOver ? "战斗结束" : this.combat.turn === "player" ? "你的回合 · 请选择行动" : "敌方行动中……");
-    this.discQiText.setText(`${gameState.player.qi}\n/${gameState.player.maxQi}`);
+    this.battleHud?.update({
+      round: this.combat.round,
+      battleOver: this.combat.battleOver,
+      turn: this.combat.turn,
+      playerHp: gameState.player.hp,
+      playerMaxHp: gameState.player.maxHp,
+      playerQi: gameState.player.qi,
+      playerMaxQi: gameState.player.maxQi,
+      enemyHp: this.enemy.hp,
+      enemyMaxHp: this.enemy.maxHp,
+      enemyQi: this.enemy.qi,
+      enemyMaxQi: this.enemy.maxQi,
+    });
   }
 
-  updateBars(bars, hp, maxHp, qi, maxQi) {
-    bars.hpFill.setDisplaySize(bars.width * Phaser.Math.Clamp(hp / maxHp, 0, 1), 36);
-    bars.qiFill.setDisplaySize(bars.width * Phaser.Math.Clamp(qi / maxQi, 0, 1), 30);
-    bars.hpText.setText(`${hp}/${maxHp}`);
-    bars.qiText.setText(`${qi}/${maxQi}`);
+  /** Pixso 日志栏中的“结束”按钮只处理已经结束的战斗，不改变回合规则。 */
+  handleEndButton() {
+    if (this.victoryDialog?.isOpen) this.continueAfterVictory();
+    else if (this.defeatDialog?.isOpen) this.returnAfterDefeat();
+    else this.setLog("战斗尚未结束，请先完成本场战斗。", "#87642d");
   }
 
   /**
@@ -262,11 +292,13 @@ export class BattleScene extends Phaser.Scene {
     // 双击按钮或同时点到按钮和透明范围时，只处理一次场景切换。
     if (this.isReturningToVillage) return;
     this.isReturningToVillage = true;
-    if (this.isTestBattle) {
+    // 战败后不能把 0 点生命保存到地图；离开战败界面时与重新挑战一样先恢复状态。
+    if (this.isTestBattle || this.combat?.winner === "enemy") {
       this.combat.restorePlayer();
     }
     // 保存离开战斗时的角色状态与地图坐标，刷新网页后仍会回到战斗前的位置。
     saveFirstChapterProgress();
+    clearSceneResumeRoute();
     this.scene.start(SceneKeys.VILLAGE);
   }
 
@@ -277,6 +309,7 @@ export class BattleScene extends Phaser.Scene {
     this.playSkillAnimation(() => {
       const result = this.combat.resolvePlayerAction(prepared.action);
       this.setLog(`${gameState.player.name}施放${this.getSkillName()}，造成 ${result.damage} 点伤害！`, "#b84c3e");
+      this.queueVictoryAfterImpact(result);
     });
   }
 
@@ -287,6 +320,7 @@ export class BattleScene extends Phaser.Scene {
     this.playNormalAttackAnimation(() => {
       const result = this.combat.resolvePlayerAction(prepared.action);
       this.setLog(`${gameState.player.name}使用基础武器攻击，造成 ${result.damage} 点伤害。`);
+      this.queueVictoryAfterImpact(result);
     });
   }
 
@@ -373,6 +407,15 @@ export class BattleScene extends Phaser.Scene {
     this.updateBattleUi();
     if (this.combat.winner === "player") return this.winBattle();
     this.time.delayedCall(700, () => this.enemyTurn());
+  }
+
+  /**
+   * 致命伤害发生时立刻进入胜利结算，不再依赖攻击动画最后一帧或场景计时器。
+   * 动画正常结束时 afterPlayerAction 仍会调用 winBattle，内部防重复标记会保证只结算一次。
+   */
+  queueVictoryAfterImpact(result) {
+    if (!result?.defeated || this.combat.winner !== "player") return;
+    this.winBattle();
   }
 
   enemyTurn() {
@@ -462,16 +505,82 @@ export class BattleScene extends Phaser.Scene {
   /** 敌方动作、伤害结算完成后，判断胜负或把回合交还给玩家。 */
   finishEnemyTurn() {
     if (this.combat.winner === "enemy") {
-      this.setLog("你在第一章原型中败退了。按 R 重试本场战斗。", "#b84c3e");
-      this.input.keyboard.once("keydown-R", () => {
-        this.combat.restorePlayer();
-        this.scene.restart();
-      });
+      this.setLog("本场战斗失败。请选择重新挑战，或返回青云山休整。", "#b84c3e");
       this.updateBattleUi();
+      this.showDefeatDialog();
       return;
     }
     this.combat.finishEnemyTurn();
     this.updateBattleUi();
+  }
+
+  /**
+   * 战败后的明确出口。
+   * 弹窗只负责显示和接收输入；生命、灵气恢复仍调用战斗领域引擎提供的接口。
+   */
+  showDefeatDialog() {
+    if (this.defeatDialog?.isOpen) return;
+    const routeHint = this.adventureBattle === "qingyun-mist-guardian"
+      ? "返回青云山后，任务仍停留在“击败雾隐山魈”。"
+      : "返回青云山后，之后仍可再次进入战斗。";
+
+    this.defeatDialog = new XianxiaDialog(this).open({
+      title: "战斗失败",
+      subtitle: `气血耗尽 · ${this.enemy.name}仍未被击败`,
+      body: `你在本场战斗中力竭。\n\n重新挑战会恢复全部生命与灵气。\n${routeHint}`,
+      width: 760,
+      height: 430,
+      bodyY: -20,
+      bodySize: 21,
+      buttonGroupY: 120,
+      noticeY: 186,
+      notice: "快捷键 R：重新挑战",
+      closable: false,
+      depth: 2500,
+      buttons: [
+        {
+          label: "重新挑战",
+          variant: "primary",
+          x: -158,
+          y: 120,
+          width: 270,
+          height: 54,
+          onClick: () => this.retryBattle(),
+        },
+        {
+          label: "返回青云山",
+          variant: "secondary",
+          x: 158,
+          y: 120,
+          width: 270,
+          height: 54,
+          onClick: () => this.returnAfterDefeat(),
+        },
+      ],
+      onClose: () => {
+        this.defeatDialog = null;
+      },
+    });
+
+    // 保留原有键盘操作，但不再要求玩家必须知道这个隐藏快捷键。
+    this.input.keyboard.once("keydown-R", () => this.retryBattle());
+  }
+
+  /** 恢复战斗前的完整状态，并重新建立同一场战斗。 */
+  retryBattle() {
+    if (this.combat?.winner !== "enemy" || this.isResolvingDefeat) return;
+    this.isResolvingDefeat = true;
+    this.defeatDialog?.close({ immediate: true });
+    this.combat.restorePlayer();
+    this.scene.restart(this.battleResumeData);
+  }
+
+  /** 恢复角色状态后返回地图，避免把 0 点生命写进存档。 */
+  returnAfterDefeat() {
+    if (this.combat?.winner !== "enemy" || this.isResolvingDefeat) return;
+    this.isResolvingDefeat = true;
+    this.defeatDialog?.close({ immediate: true });
+    this.returnToVillage();
   }
 
   /**
@@ -486,12 +595,41 @@ export class BattleScene extends Phaser.Scene {
   }
 
   winBattle() {
+    // 动画回调或连续输入都不能重复结算同一场胜利。
+    if (this.isVictoryResolved) return;
+    this.isVictoryResolved = true;
+    // 胜利结算已经开始，之后刷新应回到正常流程，不能再次重建并重复结算同一场战斗。
+    clearSceneResumeRoute();
+
+    try {
+      this.resolveVictory();
+    } catch (error) {
+      // 旧存档或奖励数据异常也不能把玩家留在“战斗结束”的死画面。
+      console.error("战斗胜利结算失败：", error);
+      this.setLog(`${this.enemy.name}已被击败，但奖励结算出现异常。`, "#b84c3e");
+      this.updateBattleUi();
+      this.showVictoryDialog({
+        body: `${this.enemy.name}已被击败。\n\n奖励结算出现异常，但你仍可安全返回青云山。`,
+        destination: SceneKeys.VILLAGE,
+        buttonLabel: "返回青云山",
+        notice: "战斗已经结束，请稍后检查本场奖励",
+      });
+    }
+  }
+
+  /** 根据战斗来源推进任务、发放奖励，并装配对应的胜利弹窗内容。 */
+  resolveVictory() {
     // 测试战斗只验证战斗配置，不产生奖励、任务进度或永久生命损失。
     if (this.isTestBattle) {
       this.combat.restorePlayer();
-      this.setLog(`${this.enemy.name}被击败；测试战斗不结算奖励。\n2 秒后返回青云山。`, "#87642d");
+      this.setLog(`${this.enemy.name}被击败；测试战斗不结算奖励。`, "#87642d");
       this.updateBattleUi();
-      this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
+      this.showVictoryDialog({
+        body: `${this.enemy.name}已被击败。\n\n本场为测试战斗，不结算奖励。`,
+        destination: SceneKeys.VILLAGE,
+        buttonLabel: "返回青云山",
+        notice: "角色生命与灵气已恢复",
+      });
       return;
     }
 
@@ -513,9 +651,14 @@ export class BattleScene extends Phaser.Scene {
           rewards: ["灵石 × 12", "星萤果 × 1"],
         })
         : { rewardText: "主线进度未改变" };
-      this.setLog(`雾隐山魈消散，异光重现。获得：${result.rewardText || result.message}。\n2 秒后返回青云山。`, "#87642d");
+      const rewardText = result.rewardText || result.message;
+      this.setLog(`雾隐山魈消散，异光重现。获得：${rewardText}。`, "#87642d");
       this.updateBattleUi();
-      this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
+      this.showVictoryDialog({
+        body: `雾隐山魈消散，异光重现。\n\n获得：${rewardText}`,
+        destination: SceneKeys.VILLAGE,
+        buttonLabel: "返回青云山",
+      });
       return;
     }
 
@@ -524,16 +667,61 @@ export class BattleScene extends Phaser.Scene {
         monsterId: this.mapMonster.id,
         rewards: this.mapMonster.drops?.length ? this.mapMonster.drops : DEFAULT_MONSTER_REWARDS,
       });
-      this.setLog(`${this.enemy.name}被击败，实际获得：${result.rewardText || result.message}。\n2 秒后返回青云山。`, "#87642d");
+      const rewardText = result.rewardText || result.message;
+      this.setLog(`${this.enemy.name}被击败，实际获得：${rewardText}。`, "#87642d");
       this.updateBattleUi();
-      this.time.delayedCall(1800, () => this.scene.start(SceneKeys.VILLAGE));
+      this.showVictoryDialog({
+        body: `${this.enemy.name}已被击败。\n\n实际获得：${rewardText}`,
+        destination: SceneKeys.VILLAGE,
+        buttonLabel: "返回青云山",
+      });
       return;
     }
     const result = this.rewardService.settleVictory({ rewards: CHAPTER_ELITE_REWARDS, chapterElite: true });
-    this.setLog(`劫修倒下，实际获得：${result.rewardText || result.message}。`, "#87642d");
+    const rewardText = result.rewardText || result.message;
+    this.setLog(`劫修倒下，实际获得：${rewardText}。`, "#87642d");
     this.updateBattleUi();
-    this.time.delayedCall(1800, () => this.scene.start(SceneKeys.RESULT));
+    this.showVictoryDialog({
+      body: `劫修倒下，此战告捷。\n\n实际获得：${rewardText}`,
+      destination: SceneKeys.RESULT,
+      buttonLabel: "查看结算",
+    });
   }
 
-  setLog(text, color = "#553d36") { this.logText.setText(text).setColor(color); }
+  /** 显示统一胜利结算界面；奖励已由调用它之前的领域服务完成入账。 */
+  showVictoryDialog({ body, destination, buttonLabel, notice = "战斗奖励已自动放入储物袋" }) {
+    if (this.victoryDialog?.isOpen) return;
+    this.victoryDestination = destination;
+    const paragraphs = String(body || "")
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph.trim())
+      .filter(Boolean);
+    const summary = paragraphs.shift() || `${this.enemy.name}已被击败`;
+    const message = paragraphs.join("\n\n");
+    this.victoryDialog = new BattleResultDialog(this).open({
+      title: "战斗胜利",
+      summary,
+      message,
+      buttonLabel,
+      notice: `${notice} · Enter 确认`,
+      depth: 2500,
+      onConfirm: () => this.continueAfterVictory(),
+      onClose: () => {
+        this.victoryDialog = null;
+      },
+    });
+    this.input.keyboard.once("keydown-ENTER", () => this.continueAfterVictory());
+  }
+
+  /** 关闭胜利弹窗并前往当前战斗类型原本的目标页面。 */
+  continueAfterVictory() {
+    if (this.combat?.winner !== "player" || this.isLeavingVictory) return;
+    this.isLeavingVictory = true;
+    const destination = this.victoryDestination || SceneKeys.VILLAGE;
+    this.victoryDialog?.close({ immediate: true });
+    clearSceneResumeRoute();
+    this.scene.start(destination);
+  }
+
+  setLog(text, color = "#553d36") { this.battleHud?.setLog(text, color); }
 }

@@ -12,7 +12,7 @@ export class SectOverviewPanel {
     this.drawMembers();
     this.drawFeatures();
     this.drawRightRail();
-    addButton(scene, 960, 1036, 220, "返回大地图", onBack, { height: 48, size: 18 });
+    this.drawBackButton(onBack);
     this.createFeatureDialog();
   }
 
@@ -20,13 +20,19 @@ export class SectOverviewPanel {
     const scene = this.scene;
     scene.add.image(960, 540, "sect-mountain-background").setDisplaySize(1920, 1080);
     scene.add.rectangle(960, 540, 1920, 1080, 0xf6f0db, 0.08);
-    // 门派名不再占据整条顶部横栏；右对齐后，左侧状态栏与六个图标可以完整复用大地图排版。
-    addText(scene, 1872, 38, this.sect.name, 36, "#f1cf72", { strokeThickness: 4 })
-      .setOrigin(1, 0.5)
+    // Pixso 使用独立宗门名牌。文字保持动态，新增门派时仍然只需维护 SectCatalog。
+    const titlePlaque = scene.add.image(1540, 22, "sect-overview-title-plaque")
+      .setOrigin(0)
+      .setDepth(905);
+    const title = addText(scene, 1719, 66, this.sect.name, 36, "#e9bd65", { origin: 0.5, strokeThickness: 2 })
       .setDepth(910);
-    addText(scene, 1872, 78, this.sect.subtitle, 16, "#eee2c5", { strokeThickness: 3 })
-      .setOrigin(1, 0.5)
+    const subtitle = addText(scene, 1719, 108, this.sect.subtitle, 16, "#e8dfcf", { origin: 0.5, strokeThickness: 2 })
       .setDepth(910);
+    this.titleElements = [titlePlaque, title, subtitle];
+  }
+
+  setTitleVisible(visible) {
+    this.titleElements?.forEach((element) => element.setVisible(Boolean(visible)));
   }
 
   drawPlayerToolbar(onToolbarAction) {
@@ -45,44 +51,66 @@ export class SectOverviewPanel {
 
   drawMembers() {
     const scene = this.scene;
-    scene.add.rectangle(150, 560, 260, 520, 0x111914, 0.78).setStrokeStyle(2, 0x806638);
-    addText(scene, 42, 325, "门内修士", 22, "#efcc68", { strokeThickness: 2 });
+    // 左栏严格按 Pixso 画板坐标摆放：外框只承担分组，成员数据仍来自门派目录。
+    scene.add.image(44, 362, "sect-overview-members-panel").setOrigin(0);
+    addText(scene, 85, 405, "门内修士", 24, "#e9bd65", { strokeThickness: 2 });
+    const rowYs = [454, 541, 629, 716];
     this.sect.members.forEach((member, index) => {
-      const y = 390 + index * 108;
-      scene.add.rectangle(150, y, 224, 82, 0x1d2921, 0.88).setStrokeStyle(1, 0x665433);
-      scene.add.circle(77, y, 27, 0x50635b, 1).setStrokeStyle(2, 0xb99a59);
-      addText(scene, 77, y, member.name.slice(0, 1), 22, "#fff1c4", { origin: 0.5, strokeThickness: 1 });
-      addText(scene, 118, y - 21, member.name, 17, "#f5e1ad", { strokeThickness: 1 });
-      addText(scene, 118, y + 8, `${member.realm} · ${member.role}`, 13, "#b9c8b8", { strokeThickness: 0 });
+      const y = rowYs[index] ?? (454 + index * 87);
+      scene.add.image(83, y, "sect-overview-member-card").setOrigin(0);
+      scene.add.image(94, y + 12, "sect-overview-member-seal").setOrigin(0);
+      addText(scene, 124.5, y + 43, member.seal || member.name.slice(0, 1), 30, "#f4df9b", { origin: 0.5, strokeThickness: 1 });
+      addText(scene, 169, y + 12, member.name, 17, "#e9bd65", { strokeThickness: 1 });
+      addText(scene, 169, y + 39, `${member.realm} · ${member.role}`, 14, "#e7e1d8", { strokeThickness: 0 });
     });
   }
 
   drawFeatures() {
     const scene = this.scene;
-    const positions = [{ x: 1110, y: 500 }, { x: 1515, y: 590 }];
+    const positions = [{ x: 552, y: 239 }, { x: 1014, y: 362 }];
     this.sect.features.filter((feature) => feature.enabled).forEach((feature, index) => {
-      const position = positions[index] || { x: 1110 + (index % 2) * 405, y: 500 + Math.floor(index / 2) * 190 };
+      const position = positions[index] || { x: 552 + (index % 2) * 462, y: 239 + Math.floor(index / 2) * 123 };
       const panel = scene.add.container(position.x, position.y);
-      const bg = scene.add.rectangle(0, 0, 270, 132, 0x222827, 0.94)
-        .setStrokeStyle(2, 0x8f7445)
+      const bg = scene.add.image(0, 0, "sect-overview-feature-panel")
+        .setOrigin(0)
         .setInteractive({ useHandCursor: true });
-      const seal = scene.add.circle(0, -22, 28, 0xb47a24, 1).setStrokeStyle(2, 0xf0c567);
-      const sealText = addText(scene, 0, -22, feature.seal, 24, "#fff2c1", { origin: 0.5, strokeThickness: 1 });
-      const label = addText(scene, 0, 38, feature.label, 22, "#f0d49b", { origin: 0.5, strokeThickness: 2 });
+      // 圆章与入口名作为一个整体落在横牌的视觉中心。
+      const seal = scene.add.circle(104, 42, 23, 0x96702f, 0.96).setStrokeStyle(2, 0xd7b15c);
+      const sealText = addText(scene, 104, 42, feature.seal, 23, "#f8e2a3", { origin: 0.5, strokeThickness: 1 });
+      const label = addText(scene, 104, 84, feature.label, 22, "#e9bd65", { origin: 0.5, strokeThickness: 2 });
       panel.add([bg, seal, sealText, label]);
-      bg.on("pointerover", () => bg.setFillStyle(0x3a342a));
-      bg.on("pointerout", () => bg.setFillStyle(0x222827));
-      bg.on("pointerdown", () => this.onFeature(feature));
+      bg.on("pointerover", () => bg.setAlpha(0.9));
+      bg.on("pointerout", () => bg.setAlpha(1));
+      bg.on("pointerdown", (_pointer, _x, _y, event) => {
+        event?.stopPropagation?.();
+        this.onFeature(feature);
+      });
     });
   }
 
   drawRightRail() {
     const scene = this.scene;
-    scene.add.rectangle(1735, 260, 320, 260, 0x111914, 0.76).setStrokeStyle(2, 0x806638);
-    addText(scene, 1600, 160, "宗门事务", 22, "#efcc68", { strokeThickness: 2 });
-    addText(scene, 1600, 210, "当前身份：外门访客", 16, "#d8ddcb", { strokeThickness: 0 });
-    addText(scene, 1600, 250, "准入方式：令牌 / 任务", 16, "#d8ddcb", { strokeThickness: 0 });
-    addText(scene, 1600, 304, "任务、门人、宝库与传送接口\n已按门派配置预留。", 15, "#aeb9ac", { wordWrap: { width: 260 }, lineSpacing: 8, strokeThickness: 0 });
+    scene.add.image(1559, 362, "sect-overview-affairs-panel").setOrigin(0).setDisplaySize(318, 380);
+    addText(scene, 1603, 407, "宗门事务", 22, "#e9bd65", { strokeThickness: 2 });
+    addText(scene, 1603, 465, "当前身份：外门访客", 16, "#e7e1d8", { strokeThickness: 0 });
+    addText(scene, 1603, 497, "准入方式：令牌 / 任务", 16, "#e7e1d8", { strokeThickness: 0 });
+    addText(scene, 1603, 528, "任务：门人、宝库与传送接口已按门派配置预留。", 15, "#d2cec5", { wordWrap: { width: 235, useAdvancedWrap: true }, lineSpacing: 8, strokeThickness: 0 });
+  }
+
+  drawBackButton(onBack) {
+    const scene = this.scene;
+    const button = scene.add.container(835, 977);
+    const background = scene.add.image(0, 0, "sect-overview-back-button")
+      .setOrigin(0)
+      .setInteractive({ useHandCursor: true });
+    const label = addText(scene, 125.5, 29, "返回大地图", 18, "#f2d07a", { origin: 0.5, strokeThickness: 2 });
+    button.add([background, label]);
+    background.on("pointerover", () => background.setAlpha(0.9));
+    background.on("pointerout", () => background.setAlpha(1));
+    background.on("pointerdown", (_pointer, _x, _y, event) => {
+      event?.stopPropagation?.();
+      onBack();
+    });
   }
 
   createFeatureDialog() {
