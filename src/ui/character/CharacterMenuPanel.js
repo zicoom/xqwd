@@ -18,6 +18,26 @@ import { SocialPanel } from "../social/SocialPanel.js";
 import { AttributePanel } from "./AttributePanel.js";
 
 const AVAILABLE_TABS = Object.freeze(["属性", "储物袋", "法宝", "法术", "功法", "社交", "存档"]);
+const TAB_INTERFACE_IDS = Object.freeze({
+  属性: "menu:attribute",
+  储物袋: "menu:storage",
+  法宝: "menu:artifacts",
+  法术: "menu:spells",
+  功法: "menu:techniques",
+  社交: "menu:social",
+  存档: "menu:save",
+});
+const INTERFACE_ID_TABS = Object.freeze(Object.fromEntries(
+  Object.entries(TAB_INTERFACE_IDS).map(([tab, interfaceId]) => [interfaceId, tab]),
+));
+
+export function getCharacterMenuInterfaceId(tab) {
+  return TAB_INTERFACE_IDS[tab] || "";
+}
+
+export function getCharacterMenuTab(interfaceId) {
+  return INTERFACE_ID_TABS[interfaceId] || "";
+}
 // 一级导航按固定 180px 单元格均分，文字、选中框与点击区共用同一套坐标，避免手写坐标造成间距不一。
 const NAV_SLOT_WIDTH = 180;
 const NAV_FIRST_CENTER_X = 320;
@@ -96,6 +116,7 @@ export class CharacterMenuPanel {
     this.saveArchiveService = services.saveArchiveService || scene.saveArchiveService;
     this.beforeSave = services.beforeSave || (() => scene.rememberPlayerPosition?.());
     this.onLoaded = services.onLoaded || (() => scene.scene.restart());
+    this.onInterfaceChange = services.onInterfaceChange || (() => {});
     this.profileService = services.profileService || new CharacterProfileService({
       player: gameState.player,
       catalog: this.catalog,
@@ -218,6 +239,7 @@ export class CharacterMenuPanel {
     this.techniquePage.setVisible(nextTab === "功法");
     this.socialPage.setVisible(nextTab === "社交");
     this.savePage.setVisible(nextTab === "存档");
+    if (this.visible) this.onInterfaceChange(nextTab);
   }
 
   open(initialTab = "储物袋") {
@@ -242,6 +264,7 @@ export class CharacterMenuPanel {
     this.storagePage.deactivate();
     this.scene.tweens.killTweensOf(this.panel);
     this.panel.setVisible(false);
+    this.onInterfaceChange(null);
   }
 
   pointerCandidates(pointer) {

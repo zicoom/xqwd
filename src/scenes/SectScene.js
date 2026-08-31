@@ -32,8 +32,13 @@ import { preloadFurnacePickerAssets } from "../ui/sect/FurnacePickerDialog.js";
 import { RetreatRoomPanel, preloadRetreatRoomAssets } from "../ui/sect/RetreatRoomPanel.js";
 import { SectOverviewPanel } from "../ui/sect/SectOverviewPanel.js";
 import { preloadPlayerTopToolbarAssets } from "../ui/PlayerTopToolbar.js";
-import { CharacterMenuPanel, preloadCharacterMenuAssets } from "../ui/character/CharacterMenuPanel.js";
-import { XianxiaDialog } from "../ui/XianxiaDialog.js";
+import {
+  CharacterMenuPanel,
+  getCharacterMenuInterfaceId,
+  getCharacterMenuTab,
+  preloadCharacterMenuAssets,
+} from "../ui/character/CharacterMenuPanel.js";
+import { GameSettingsDialog, preloadGameSettingsAssets } from "../ui/settings/GameSettingsDialog.js";
 
 /** 门派内部总览场景；负责资源与服务装配，具体规则和绘制分别留在 domain / ui。 */
 export class SectScene extends Phaser.Scene {
@@ -42,6 +47,7 @@ export class SectScene extends Phaser.Scene {
   init(data) {
     this.sectId = data?.sectId || "sect:tianjian";
     this.resumeFeatureId = data?.featureId || "";
+    this.resumeInterfaceId = data?.interfaceId || "";
   }
 
   preload() {
@@ -80,6 +86,7 @@ export class SectScene extends Phaser.Scene {
     this.load.image(portrait.textureKey, portrait.imagePath);
     preloadPlayerTopToolbarAssets(this);
     preloadCharacterMenuAssets(this, getItemTemplates());
+    preloadGameSettingsAssets(this);
   }
 
   create() {
@@ -91,10 +98,7 @@ export class SectScene extends Phaser.Scene {
       return;
     }
     this.activeFeaturePanel = null;
-    rememberSectRoute({
-      sectId: sect.id,
-      saveSlot: gameState.activeSaveSlot,
-    });
+    this.currentFeatureId = "";
     this.itemCatalog = new ItemCatalog({
       resolveTexture: (item) => {
         const customTexture = `item-custom-${item.id}`;
@@ -127,6 +131,7 @@ export class SectScene extends Phaser.Scene {
       saveArchiveService: this.saveArchiveService,
       beforeSave: () => {},
       onLoaded: () => this.returnToWorld(),
+      onInterfaceChange: (tab) => this.rememberSectInterface(getCharacterMenuInterfaceId(tab)),
     });
     this.settingsDialog = null;
     this.settingsPanel = null;
@@ -184,6 +189,27 @@ export class SectScene extends Phaser.Scene {
     });
     const resumeFeature = sect.features.find((feature) => feature.id === this.resumeFeatureId && feature.enabled);
     if (resumeFeature) this.openFeature(resumeFeature);
+    else this.rememberSectInterface();
+    this.restoreSectInterface();
+  }
+
+  rememberSectInterface(interfaceId = "") {
+    rememberSectRoute({
+      sectId: this.sectId,
+      featureId: this.currentFeatureId,
+      interfaceId,
+      saveSlot: gameState.activeSaveSlot,
+    });
+  }
+
+  restoreSectInterface() {
+    const tab = getCharacterMenuTab(this.resumeInterfaceId);
+    if (tab) {
+      this.overview.dialog.setVisible(false);
+      this.characterMenu.open(tab);
+      return;
+    }
+    if (this.resumeInterfaceId === "settings") this.openGameSettings();
   }
 
   openFeature(feature) {
@@ -192,14 +218,16 @@ export class SectScene extends Phaser.Scene {
       sectName: this.overview.sect.name,
       onBack: () => {
         this.activeFeaturePanel = null;
+        this.currentFeatureId = "";
         this.overview.setTitleVisible(true);
-        rememberSectRoute({ sectId: this.sectId, saveSlot: gameState.activeSaveSlot });
+        this.rememberSectInterface();
       },
       onReturnToWorld: () => this.returnToWorld(),
     };
     if (feature.id === "alchemy") {
       this.overview.setTitleVisible(false);
-      rememberSectRoute({ sectId: this.sectId, featureId: feature.id, saveSlot: gameState.activeSaveSlot });
+      this.currentFeatureId = feature.id;
+      this.rememberSectInterface();
       this.activeFeaturePanel = new AlchemyRoomPanel(this, {
         ...common,
         service: this.alchemyService,
@@ -209,7 +237,8 @@ export class SectScene extends Phaser.Scene {
     }
     if (feature.id === "retreat") {
       this.overview.setTitleVisible(false);
-      rememberSectRoute({ sectId: this.sectId, featureId: feature.id, saveSlot: gameState.activeSaveSlot });
+      this.currentFeatureId = feature.id;
+      this.rememberSectInterface();
       this.activeFeaturePanel = new RetreatRoomPanel(this, {
         ...common,
         service: this.retreatService,
@@ -249,27 +278,24 @@ export class SectScene extends Phaser.Scene {
 
   openGameSettings() {
     if (this.settingsPanel) return;
-    this.settingsDialog = new XianxiaDialog(this);
+    this.rememberSectInterface("settings");
+    this.settingsDialog = new GameSettingsDialog(this);
     this.settingsPanel = this.settingsDialog;
     this.settingsDialog.open({
       title: "游戏设置",
       subtitle: "全屏、存档与两台电脑的数据同步",
-      width: 814,
-      height: 660,
-      noticeY: 262,
-      buttonGroupY: 48,
-      buttonGap: 61,
       buttons: [
-        { label: "进入全屏", variant: "secondary", onClick: () => this.enterFullscreen() },
-        { label: "窗口化", variant: "secondary", onClick: () => this.exitFullscreen() },
-        { label: "导出游戏数据", variant: "utility", onClick: () => this.exportGameData() },
-        { label: "导入游戏数据", variant: "utility", onClick: () => this.importGameData() },
-        { label: "保存并退出到封面", variant: "primary", onClick: () => this.exitToCover() },
+        { label: "进入全屏", variant: "dark", onClick: () => this.enterFullscreen() },
+        { label: "窗口化", variant: "dark", onClick: () => this.exitFullscreen() },
+        { label: "导出游戏数据", variant: "dark", hoverVariant: "gold", onClick: () => this.exportGameData() },
+        { label: "导入游戏数据", variant: "dark", onClick: () => this.importGameData() },
+        { label: "保存并退出到封面", variant: "dark", onClick: () => this.exitToCover() },
         { label: "关闭", variant: "danger", onClick: () => this.closeGameSettings() },
       ],
       onClose: () => {
         this.settingsDialog = null;
         this.settingsPanel = null;
+        this.rememberSectInterface();
       },
     });
   }
@@ -320,6 +346,7 @@ export class SectScene extends Phaser.Scene {
   }
 
   closeGameSettings() {
+    this.rememberSectInterface();
     this.settingsDialog?.close();
   }
 }

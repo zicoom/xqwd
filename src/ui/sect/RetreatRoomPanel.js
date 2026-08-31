@@ -3,6 +3,8 @@ import { gameState } from "../../core/GameState.js";
 import { getCultivationProgress } from "../../domain/character/CharacterProfileService.js";
 import { addText, playUiClickSound } from "../../utils/UiHelpers.js";
 import { BreakthroughMinigamePanel } from "./BreakthroughMinigamePanel.js";
+import { RetreatBookPickerDialog, preloadRetreatBookPickerAssets } from "./RetreatBookPickerDialog.js";
+import { RetreatLearningOverlay, preloadRetreatLearningAssets } from "./RetreatLearningOverlay.js";
 
 const TITLE_FONT = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
 const UI_FONT = '"SJ yuantijian-C-Regular", "Microsoft YaHei", sans-serif';
@@ -26,12 +28,6 @@ const RETREAT_ROOM_ASSETS = Object.freeze({
 });
 const COLORS = Object.freeze({
   navy: 0x070916,
-  panel: 0x161d30,
-  panelCard: 0x222738,
-  blue: 0x426ba7,
-  brown: 0x574131,
-  paleBlue: 0xaec8ff,
-  gold: 0xfebc00,
   button: 0x3b2a1e,
   buttonHover: 0x5b3c26,
 });
@@ -39,14 +35,6 @@ const COLORS = Object.freeze({
 const KIND_META = Object.freeze({
   spell: { label: "法术", assetKey: RETREAT_ROOM_ASSETS.spellEntry, width: 244, height: 292 },
   technique: { label: "功法", assetKey: RETREAT_ROOM_ASSETS.techniqueEntry, width: 243, height: 292 },
-});
-
-const GRADE_COLORS = Object.freeze({
-  凡品: "#b9c0ce",
-  灵品: "#55cf93",
-  地品: "#64a9ff",
-  天品: "#bf79ff",
-  仙品: "#ff6969",
 });
 
 const textStyle = (origin = 0.5, extra = {}) => ({
@@ -60,6 +48,8 @@ const formatRealm = (realm) => String(realm || "炼气初期").replace(/^炼气[
 
 /** 预加载 Pixso“改版 / 闭关室”画板的语义化素材。 */
 export function preloadRetreatRoomAssets(scene) {
+  preloadRetreatBookPickerAssets(scene);
+  preloadRetreatLearningAssets(scene);
   scene.load.image(RETREAT_ROOM_ASSETS.background, `${RETREAT_ROOM_ASSET_ROOT}/background.jpg`);
   scene.load.image(RETREAT_ROOM_ASSETS.meditation, `${RETREAT_ROOM_ASSET_ROOT}/meditating-cultivator.png`);
   scene.load.image(RETREAT_ROOM_ASSETS.spellEntry, `${RETREAT_ROOM_ASSET_ROOT}/spell-entry.png`);
@@ -90,6 +80,7 @@ export class RetreatRoomPanel {
     this.selectedMonths = this.service.listDurations()[0]?.months || 12;
     this.meditationTimer = null;
     this.studyTimer = null;
+    this.learningView = null;
     this.overlay = null;
     this.overlayMasks = [];
     this.overlayMode = "";
@@ -287,86 +278,42 @@ export class RetreatRoomPanel {
     this.destroyOverlay();
     this.overlayMode = "books";
     const scene = this.scene;
-    const overlay = scene.add.container(0, 0).setDepth(1200);
-    this.overlay = overlay;
-    overlay.add(scene.add.rectangle(960, 540, 1920, 1080, 0x000000, 0.8).setInteractive());
-    this.addRoundedPanel(overlay, 960, 540, 565, 764, 20, COLORS.panel, 1, 0x363b55, 2);
-    this.addOverlayText(710, 200, `${KIND_META[kind].label}秘籍`, 26, COLORS.paleBlue, { origin: [0, 0.5] });
-    overlay.add(scene.add.rectangle(960, 236, 500, 1, 0x626a82, 0.72));
-    const close = this.addOverlayText(1197, 207, "×", 35, "#9299aa").setInteractive({ useHandCursor: true });
-    close.on("pointerdown", () => {
-      playUiClickSound(scene);
-      this.destroyOverlay();
-    });
-
     const previews = getRetreatBookPreviews(kind);
     const studies = new Map(this.service.listStudies(kind).map((study) => [study.id, study]));
-    const positions = [[830, 356], [1091, 356], [830, 571], [1091, 571], [830, 786], [1091, 786]];
-    previews.forEach((preview, index) => {
-      const [x, y] = positions[index] || [830 + (index % 2) * 261, 356 + Math.floor(index / 2) * 215];
-      this.drawBookCard(overlay, preview, studies.get(preview.studyId), x, y, index === 0);
+    const entries = previews.map((preview) => ({ preview, study: studies.get(preview.studyId) }));
+    while (entries.length < 6) entries.push(null);
+    const dialog = new RetreatBookPickerDialog(scene, {
+      title: `${KIND_META[kind].label}秘籍`,
+      entries,
+      selectedIndex: Math.max(0, entries.findIndex((entry) => entry?.preview?.studyId)),
+      onClose: () => this.destroyOverlay(),
+      onSelect: (entry) => {
+        const { preview } = entry;
+        if (!preview.studyId) {
+          this.showToast(preview.lockedMessage || "该秘籍尚未开放。", 960, 957, this.overlay, 2200);
+          return;
+        }
+        const started = this.service.beginTimedStudy(preview.studyId, this.selectedMonths, scene.time.now);
+        if (!started.ok) {
+          this.showToast(started.message, 960, 957, this.overlay, 2400);
+          return;
+        }
+        this.openLearningOverlay(started);
+      },
     });
-    if (kind === "technique" && previews.length < 6) {
-      this.addOverlayText(960, 638, "其余功法秘籍将在后续门派内容中开放", 17, "#7f879c");
-    }
-  }
-
-  drawBookCard(parent, preview, study, x, y, highlighted) {
-    const scene = this.scene;
-    const card = scene.add.container(x, y);
-    parent.add(card);
-    const frame = scene.add.graphics();
-    const redraw = (hovered = false) => {
-      frame.clear();
-      frame.fillStyle(COLORS.panelCard, 1);
-      frame.fillRoundedRect(-120, -97.5, 240, 195, 10);
-      frame.lineStyle(2, highlighted || hovered ? COLORS.gold : 0x454b65, highlighted || hovered ? 1 : 0.9);
-      frame.strokeRoundedRect(-120, -97.5, 240, 195, 10);
-    };
-    redraw();
-    card.add(frame);
-    const hit = scene.add.rectangle(0, 0, 240, 195, 0xffffff, 0).setInteractive({ useHandCursor: true });
-    card.add(hit);
-    if (scene.textures.exists(preview.artKey)) card.add(scene.add.image(0, -45, preview.artKey).setDisplaySize(60, 60));
-    card.add(this.makeTextObject(0, 7, preview.name, 18, "#f0f1f5"));
-    card.add(this.makeTextObject(0, 37, `${preview.grade} · ${preview.element}系`, 14, GRADE_COLORS[preview.grade] || "#b9c0ce"));
-    const requirement = study?.learned ? "已领悟" : study?.owned ? "秘籍已备" : preview.requirement;
-    card.add(this.makeTextObject(0, 67, `◉ ${requirement}`, 14, study?.owned ? "#6bd39d" : "#c5a967"));
-    hit.on("pointerover", () => redraw(true));
-    hit.on("pointerout", () => redraw(false));
-    hit.on("pointerdown", () => {
-      playUiClickSound(scene);
-      if (!preview.studyId) {
-        this.showToast(preview.lockedMessage || "该秘籍尚未开放。", 960, 957, parent, 2200);
-        return;
-      }
-      const started = this.service.beginTimedStudy(preview.studyId, this.selectedMonths, scene.time.now);
-      if (!started.ok) {
-        this.showToast(started.message, 960, 957, parent, 2400);
-        return;
-      }
-      this.openLearningOverlay(started);
-    });
+    this.overlay = dialog.root;
   }
 
   openLearningOverlay(started) {
     this.destroyOverlay({ keepStudy: true });
     this.overlayMode = "learning";
     const scene = this.scene;
-    const overlay = scene.add.container(0, 0).setDepth(1200);
-    this.overlay = overlay;
-    overlay.add(scene.add.rectangle(960, 540, 1920, 1080, 0x000000, 0.8).setInteractive());
-    const outer = scene.add.circle(957, 482, 122, 0x162a50, 0.2).setStrokeStyle(4, 0x6194e8, 0.88);
-    const inner = scene.add.circle(957, 482, 87, 0x142341, 0.14).setStrokeStyle(2, 0x94bcff, 0.9);
-    overlay.add([outer, inner]);
-    overlay.add(scene.add.image(957, 478, "pixso-retreat-meditation").setDisplaySize(210, 210));
-    this.learningTitle = this.addOverlayText(960, 638, "引气入体，凝神铭法...", 35, "#bbc8f1", { fontFamily: TITLE_FONT });
-    this.addRoundedPanel(overlay, 960, 706, 533, 35, 17, 0x05070d, 0.66, 0x2d3b58, 1);
-    this.learningFill = scene.add.rectangle(696, 706, 525, 27, 0x5389ee, 1).setOrigin(0, 0.5).setScale(0, 1);
-    overlay.add(this.learningFill);
-    this.learningCaption = this.addOverlayText(960, 752, this.learningProgressText(started), 20, "#86899c");
-    scene.tweens.add({ targets: outer, alpha: { from: 0.58, to: 1 }, scale: { from: 0.96, to: 1.05 }, duration: 1150, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
-    scene.tweens.add({ targets: inner, angle: 360, duration: 6000, repeat: -1 });
+    this.learningView = new RetreatLearningOverlay(scene, {
+      meditationAssetKey: RETREAT_ROOM_ASSETS.meditation,
+      progress: started.progress,
+      progressText: this.learningProgressText(started),
+    });
+    this.overlay = this.learningView.root;
     this.studyTimer = scene.time.addEvent({ delay: 100, loop: true, callback: () => this.advanceTimedStudy() });
   }
 
@@ -377,8 +324,8 @@ export class RetreatRoomPanel {
       this.renderMain(status.message);
       return;
     }
-    this.learningFill?.setScale(status.progress, 1);
-    this.learningCaption?.setText(this.learningProgressText(status));
+    this.learningView?.setProgress(status.progress);
+    this.learningView?.setProgressText(this.learningProgressText(status));
     if (!status.completed) return;
     this.stopStudyTimer();
     const result = this.service.completeTimedStudy();
@@ -394,7 +341,7 @@ export class RetreatRoomPanel {
   learningProgressText(status) {
     const totalYears = Math.max(1, Number(status.duration?.years) || 1);
     const elapsedYears = Math.min(totalYears, Math.floor(totalYears * (Number(status.progress) || 0)));
-    return `闭关进度:${elapsedYears}/${totalYears}年`;
+    return `闭关进度：${elapsedYears}/${totalYears} 年`;
   }
 
   openSuccessOverlay(result) {
@@ -714,6 +661,7 @@ export class RetreatRoomPanel {
     this.overlayMasks.forEach((mask) => mask.destroy());
     this.overlayMasks = [];
     this.overlay = null;
+    this.learningView = null;
     this.overlayMode = "";
     if (!keepStudy && this.service.activeAttempt) this.service.abortStudy();
   }

@@ -4,6 +4,7 @@ import { configureFullHdScene } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
 import { XianxiaDialog } from "../ui/XianxiaDialog.js";
 import { PLAYER_PORTRAITS } from "../core/PortraitCatalog.js";
+import { rememberSceneRoute } from "../core/SceneResumeState.js";
 
 /**
  * 游戏封面场景。
@@ -11,6 +12,10 @@ import { PLAYER_PORTRAITS } from "../core/PortraitCatalog.js";
  */
 export class CoverScene extends Phaser.Scene {
   constructor() { super(SceneKeys.COVER); }
+
+  init(data) {
+    this.resumeInterfaceId = data?.interfaceId || "";
+  }
 
   preload() {
     // 用户提供的水墨仙侠图片，作为《玄穹问道》的正式启动封面。
@@ -23,6 +28,7 @@ export class CoverScene extends Phaser.Scene {
 
   create() {
     clearEditorRoute();
+    rememberSceneRoute({ sceneKey: SceneKeys.COVER, interfaceId: this.resumeInterfaceId });
     configureFullHdScene(this);
     // 场景从角色选择页返回后会复用同一个实例，因此每次显示封面都要重置开始标记。
     this.isStarting = false;
@@ -68,6 +74,7 @@ export class CoverScene extends Phaser.Scene {
     addText(this, 960, 1022, "踏入仙途后，可选择已有角色或创建新角色", 22, "#e4dfc9", { strokeThickness: 0 }).setOrigin(0.5);
 
     this.input.keyboard.once("keydown-ENTER", () => this.startGame());
+    if (this.resumeInterfaceId === "settings") this.time.delayedCall(0, () => this.showSettings());
   }
 
   /** 防止按钮和 Enter 在同一瞬间重复切换场景。 */
@@ -83,6 +90,7 @@ export class CoverScene extends Phaser.Scene {
   /** 显示基础设置说明；完整的音量、画面和按键设置将在设置系统阶段继续扩展。 */
   showSettings() {
     if (this.settingsPanel) return;
+    rememberSceneRoute({ sceneKey: SceneKeys.COVER, interfaceId: "settings" });
     // 封面与游戏内设置共享同一套 XianxiaDialog，保证玩家从启动到游戏中的视觉一致性。
     this.settingsDialog = new XianxiaDialog(this);
     this.settingsPanel = this.settingsDialog;
@@ -97,6 +105,7 @@ export class CoverScene extends Phaser.Scene {
       onClose: () => {
         this.settingsDialog = null;
         this.settingsPanel = null;
+        rememberSceneRoute({ sceneKey: SceneKeys.COVER });
       },
     });
   }

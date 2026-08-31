@@ -8,6 +8,7 @@ import { configureFullHdScene } from "../core/DisplayConfig.js";
 import { DEFAULT_PLAYER_PORTRAIT_ID, getPlayerPortrait, PLAYER_PORTRAITS } from "../core/PortraitCatalog.js";
 import { CharacterCreationService, FIVE_ELEMENTS } from "../domain/character/CharacterCreationService.js";
 import { addText, playUiClickSound } from "../utils/UiHelpers.js";
+import { rememberSceneRoute } from "../core/SceneResumeState.js";
 
 /**
  * 角色创建场景。
@@ -21,10 +22,23 @@ export class CharacterCreateScene extends Phaser.Scene {
   init(data) {
     this.isCreatingNewCharacter = Boolean(data?.newCharacter);
     this.slotIndex = data?.slotIndex;
+    this.resumeInterfaceId = data?.interfaceId || "";
+  }
+
+  preload() {
+    // 刷新后 BootScene 可以直接恢复到创建页，不能再依赖先经过封面时留下的纹理缓存。
+    this.load.image("xuanqiong-wendao-cover", "./public/assets/images/covers/xuanqiong-wendao-cover-2048.jpg");
+    PLAYER_PORTRAITS.forEach((portrait) => this.load.image(portrait.textureKey, portrait.imagePath));
   }
 
   create() {
     configureFullHdScene(this);
+    rememberSceneRoute({
+      sceneKey: SceneKeys.CREATE,
+      interfaceId: this.resumeInterfaceId,
+      slotIndex: this.slotIndex,
+      newCharacter: this.isCreatingNewCharacter,
+    });
     if (this.isCreatingNewCharacter) prepareNewCharacter(this.slotIndex);
 
     this.rootTexts = {};
@@ -72,6 +86,7 @@ export class CharacterCreateScene extends Phaser.Scene {
       strokeThickness: 3
     }).setOrigin(0.5).setDepth(20);
     this.createPortraitPicker();
+    if (this.resumeInterfaceId === "portrait-picker") this.time.delayedCall(0, () => this.openPortraitPicker());
   }
 
   drawMainPanels() {
@@ -219,6 +234,12 @@ export class CharacterCreateScene extends Phaser.Scene {
   }
 
   openPortraitPicker() {
+    rememberSceneRoute({
+      sceneKey: SceneKeys.CREATE,
+      interfaceId: "portrait-picker",
+      slotIndex: this.slotIndex,
+      newCharacter: this.isCreatingNewCharacter,
+    });
     this.portraitSelectionIndex = Math.max(0, PLAYER_PORTRAITS.findIndex((portrait) => portrait.id === gameState.player.portraitId));
     this.renderPortraitPicker();
     this.portraitPicker.setVisible(true).setAlpha(0);
@@ -226,6 +247,11 @@ export class CharacterCreateScene extends Phaser.Scene {
   }
 
   closePortraitPicker() {
+    rememberSceneRoute({
+      sceneKey: SceneKeys.CREATE,
+      slotIndex: this.slotIndex,
+      newCharacter: this.isCreatingNewCharacter,
+    });
     this.tweens.add({
       targets: this.portraitPicker,
       alpha: 0,

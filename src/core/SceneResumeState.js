@@ -1,5 +1,14 @@
+import { SceneKeys } from "./SceneKeys.js";
+
 const STORAGE_KEY = "xuanqiong-wendao-scene-resume-v1";
 const CURRENT_VERSION = 1;
+const RESUMABLE_SCENES = new Set([
+  SceneKeys.COVER,
+  SceneKeys.SLOT_SELECT,
+  SceneKeys.CREATE,
+  SceneKeys.VILLAGE,
+  SceneKeys.RESULT,
+]);
 
 function getDefaultStorage() {
   try {
@@ -18,11 +27,75 @@ function normalizeSaveSlot(value) {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+function normalizeCreationSlot(value) {
+  return Number.isInteger(value) && value >= 0 && value < 5 ? value : null;
+}
+
+function readStoredRoute(storage) {
+  if (!storage?.getItem) return null;
+  try {
+    const raw = storage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 记录封面、角色档案、创建角色、大地图及章节结算等稳定场景。
+ * interfaceId 只保存可重建的 UI 页签，不保存弹窗事务、表单输入或即时结算数据。
+ */
+export function rememberSceneRoute({
+  sceneKey,
+  saveSlot = null,
+  interfaceId = "",
+  slotIndex = null,
+  newCharacter = false,
+} = {}, storage = getDefaultStorage()) {
+  if (!storage?.setItem || !RESUMABLE_SCENES.has(sceneKey)) return false;
+  const normalizedSaveSlot = normalizeSaveSlot(saveSlot);
+  if ([SceneKeys.VILLAGE, SceneKeys.RESULT].includes(sceneKey) && normalizedSaveSlot === null) return false;
+  const route = {
+    version: CURRENT_VERSION,
+    kind: "scene",
+    sceneKey,
+    saveSlot: normalizedSaveSlot,
+    interfaceId: normalizeStableId(interfaceId),
+    slotIndex: normalizeCreationSlot(slotIndex),
+    newCharacter: Boolean(newCharacter),
+  };
+  try {
+    storage.setItem(STORAGE_KEY, JSON.stringify(route));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 读取普通场景恢复位置；传入档位时会拒绝其他角色留下的界面。 */
+export function getSceneResumeRoute(saveSlot = undefined, storage = getDefaultStorage()) {
+  const route = readStoredRoute(storage);
+  if (
+    route?.version !== CURRENT_VERSION ||
+    route?.kind !== "scene" ||
+    !RESUMABLE_SCENES.has(route.sceneKey)
+  ) return null;
+  const normalizedSlot = normalizeSaveSlot(route.saveSlot);
+  if (saveSlot !== undefined && normalizedSlot !== normalizeSaveSlot(saveSlot)) return null;
+  return {
+    sceneKey: route.sceneKey,
+    saveSlot: normalizedSlot,
+    interfaceId: normalizeStableId(route.interfaceId),
+    slotIndex: normalizeCreationSlot(route.slotIndex),
+    newCharacter: Boolean(route.newCharacter),
+  };
+}
+
 /**
  * 记录当前标签页正在浏览的门派页面，供 F5 刷新后恢复。
  * 这里只记录页面位置，不写入角色存档，也不保存正在进行中的小游戏事务。
  */
-export function rememberSectRoute({ sectId, featureId = "", saveSlot = null } = {}, storage = getDefaultStorage()) {
+export function rememberSectRoute({ sectId, featureId = "", interfaceId = "", saveSlot = null } = {}, storage = getDefaultStorage()) {
   if (!storage?.setItem) return false;
   const normalizedSectId = normalizeStableId(sectId);
   if (!normalizedSectId) return false;
@@ -31,6 +104,7 @@ export function rememberSectRoute({ sectId, featureId = "", saveSlot = null } = 
     kind: "sect",
     sectId: normalizedSectId,
     featureId: normalizeStableId(featureId),
+    interfaceId: normalizeStableId(interfaceId),
     saveSlot: normalizeSaveSlot(saveSlot),
   };
   try {
@@ -76,9 +150,8 @@ export function rememberBattleRoute({
 export function getSectResumeRoute(saveSlot = null, storage = getDefaultStorage()) {
   if (!storage?.getItem) return null;
   try {
-    const raw = storage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const route = JSON.parse(raw);
+    const route = readStoredRoute(storage);
+    if (!route) return null;
     const normalizedSlot = normalizeSaveSlot(saveSlot);
     if (
       route?.version !== CURRENT_VERSION ||
@@ -90,6 +163,7 @@ export function getSectResumeRoute(saveSlot = null, storage = getDefaultStorage(
     return {
       sectId,
       featureId: normalizeStableId(route.featureId),
+      interfaceId: normalizeStableId(route.interfaceId),
     };
   } catch {
     return null;

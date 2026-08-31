@@ -3,6 +3,7 @@ import { SceneKeys } from "../core/SceneKeys.js";
 import { addButton, addText, addTitle } from "../utils/UiHelpers.js";
 import { configureFullHdScene } from "../core/DisplayConfig.js";
 import { ChapterQuestService } from "../domain/quests/ChapterQuestService.js";
+import { rememberSceneRoute } from "../core/SceneResumeState.js";
 
 /** 第一章结算场景，展示已解锁内容和下一阶段目标。 */
 export class ChapterResultScene extends Phaser.Scene {
@@ -10,6 +11,7 @@ export class ChapterResultScene extends Phaser.Scene {
 
   create() {
     configureFullHdScene(this);
+    rememberSceneRoute({ sceneKey: SceneKeys.RESULT, saveSlot: gameState.activeSaveSlot });
     // 场景只装配章节事务；具体需要重置哪些任务与角色字段由领域服务统一决定。
     const chapterQuestService = new ChapterQuestService({
       chapter: gameState.chapter,

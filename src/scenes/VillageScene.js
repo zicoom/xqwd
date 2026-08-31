@@ -14,11 +14,16 @@ import { SceneKeys } from "../core/SceneKeys.js";
 import { addButton, addText, playUiClickSound, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
 import { ChapterMapHud } from "../ui/ChapterMapHud.js";
 import { preloadPlayerTopToolbarAssets } from "../ui/PlayerTopToolbar.js";
-import { CharacterMenuPanel } from "../ui/character/CharacterMenuPanel.js";
+import {
+  CharacterMenuPanel,
+  getCharacterMenuInterfaceId,
+  getCharacterMenuTab,
+} from "../ui/character/CharacterMenuPanel.js";
 import { XianxiaDialog } from "../ui/XianxiaDialog.js";
+import { GameSettingsDialog, preloadGameSettingsAssets } from "../ui/settings/GameSettingsDialog.js";
 import { configureFullHdScene, SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
-import { clearSceneResumeRoute } from "../core/SceneResumeState.js";
+import { rememberSceneRoute } from "../core/SceneResumeState.js";
 import { getPlayerPortrait } from "../core/PortraitCatalog.js";
 import { exportLocalGameData, importLocalGameDataFromFile } from "../core/LocalDataTransfer.js";
 import { ItemCatalog } from "../domain/items/ItemCatalog.js";
@@ -55,6 +60,10 @@ import { createBuildingMapLabel } from "../ui/world/BuildingMapLabel.js";
  */
 export class VillageScene extends Phaser.Scene {
   constructor() { super(SceneKeys.VILLAGE); }
+
+  init(data) {
+    this.resumeInterfaceId = data?.interfaceId || "";
+  }
 
   /** 世界物件统一按脚底 Y 坐标排序；数值保持低于固定 HUD、弹窗和任务提示。 */
   worldActorDepth(y) { return 6 + (Number(y) || 0) / 100000; }
@@ -130,8 +139,7 @@ export class VillageScene extends Phaser.Scene {
     this.load.image("artifact-category-label", "./public/assets/images/ui/artifact/artifact-category-label.png");
     // 法术页十键战斗快捷栏下方的 130×33 原始文字底签。
     this.load.image("combat-shortcut-label", "./public/assets/images/ui/spells/combat-shortcut-label.png");
-    // 游戏设置弹窗使用用户提供的新版深棕面板底图。
-    this.load.image("game-settings-panel", "./public/assets/images/ui/chapter-map/settings-panel.png");
+    preloadGameSettingsAssets(this);
     // 编辑器放置的 NPC 和怪物暂时复用现有角色立绘。
     // 日后加入 NPC/怪物图片库后，只需要把这两个纹理键替换成对应模板图片。
     this.load.image("map-monster-portrait", "./public/assets/images/battle/swordsman.png");
@@ -170,7 +178,11 @@ export class VillageScene extends Phaser.Scene {
 
   create() {
     clearEditorRoute();
-    clearSceneResumeRoute();
+    rememberSceneRoute({
+      sceneKey: SceneKeys.VILLAGE,
+      saveSlot: gameState.activeSaveSlot,
+      interfaceId: this.resumeInterfaceId,
+    });
     configureFullHdScene(this);
     // 探索画面整体拉远一点：背景、主角和地图实例会按同一比例缩小，
     // 但世界坐标、存档位置、建筑碰撞和地图编辑器资料都保持原值，不会因此错位。
@@ -240,6 +252,7 @@ export class VillageScene extends Phaser.Scene {
       artifactService: this.artifactService,
       shortcutService: this.shortcutService,
       saveArchiveService: this.saveArchiveService,
+      onInterfaceChange: (tab) => this.rememberVillageInterface(getCharacterMenuInterfaceId(tab)),
     });
     // 当前按用户要求暂时关闭大地图背景音乐；保留音乐生成函数，后续需要时可以重新启用。
     // 进入地图时主动停止旧场景可能残留的循环声，但按钮点击音等界面音效不受影响。
@@ -436,6 +449,24 @@ export class VillageScene extends Phaser.Scene {
       const uiPointer = this.getUiPointer(pointer);
       this.merchantPanel.handleWheel(uiPointer, deltaY);
     });
+    this.restoreVillageInterface();
+  }
+
+  rememberVillageInterface(interfaceId = "") {
+    rememberSceneRoute({
+      sceneKey: SceneKeys.VILLAGE,
+      saveSlot: gameState.activeSaveSlot,
+      interfaceId,
+    });
+  }
+
+  restoreVillageInterface() {
+    const tab = getCharacterMenuTab(this.resumeInterfaceId);
+    if (tab) {
+      this.characterMenu.open(tab);
+      return;
+    }
+    if (this.resumeInterfaceId === "settings") this.openGameSettings();
   }
 
   /**
@@ -838,25 +869,18 @@ export class VillageScene extends Phaser.Scene {
   /** 打开游戏内设置面板：全屏、窗口化、保存和返回封面都集中在这里。 */
   openGameSettings() {
     if (this.settingsPanel) return;
-    // 设置是通用弹窗的第一处实际使用。按钮的颜色语义固定：
-    // 蓝灰＝显示设置、金棕＝数据工具、青绿＝安全保存、赤褐＝关闭/离开。
-    this.settingsDialog = new XianxiaDialog(this);
+    this.rememberVillageInterface("settings");
+    this.settingsDialog = new GameSettingsDialog(this);
     this.settingsPanel = this.settingsDialog;
     this.settingsDialog.open({
       title: "游戏设置",
       subtitle: "全屏、存档与两台电脑的数据同步",
-      width: 814,
-      height: 660,
-      noticeY: 262,
-      // 顶部标题区不计入正文中心；按钮组稍向下放置，使上下留白在视觉上完全平衡。
-      buttonGroupY: 48,
-      buttonGap: 61,
       buttons: [
-        { label: "进入全屏", variant: "secondary", onClick: () => this.enterFullscreen() },
-        { label: "窗口化", variant: "secondary", onClick: () => this.exitFullscreen() },
-        { label: "导出游戏数据", variant: "utility", onClick: () => this.exportGameData() },
-        { label: "导入游戏数据", variant: "utility", onClick: () => this.importGameData() },
-        { label: "保存并退出到封面", variant: "primary", onClick: () => this.exitToCover() },
+        { label: "进入全屏", variant: "dark", onClick: () => this.enterFullscreen() },
+        { label: "窗口化", variant: "dark", onClick: () => this.exitFullscreen() },
+        { label: "导出游戏数据", variant: "dark", hoverVariant: "gold", onClick: () => this.exportGameData() },
+        { label: "导入游戏数据", variant: "dark", onClick: () => this.importGameData() },
+        { label: "保存并退出到封面", variant: "dark", onClick: () => this.exitToCover() },
         { label: "关闭", variant: "danger", onClick: () => this.closeGameSettings() },
       ],
       onClose: () => this.resetGameSettingsDialog(),
@@ -929,6 +953,7 @@ export class VillageScene extends Phaser.Scene {
   }
 
   closeGameSettings() {
+    this.rememberVillageInterface();
     this.settingsDialog?.close();
   }
 
@@ -939,6 +964,7 @@ export class VillageScene extends Phaser.Scene {
     this.settingsActionHitAreas = null;
     this.settingsInputBlocker = null;
     this.settingsNotice = null;
+    this.rememberVillageInterface();
   }
 
   /** 返回地图块的 Phaser 资源名称，格式固定，方便多地图统一管理。 */
