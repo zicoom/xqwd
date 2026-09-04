@@ -1,6 +1,6 @@
 import { getPlayerPortrait } from "../PortraitCatalog.js";
 
-export const CURRENT_SAVE_VERSION = 5;
+export const CURRENT_SAVE_VERSION = 6;
 export const CURRENT_SAVE_CONTAINER_VERSION = 2;
 
 export const TECHNIQUE_SLOTS = Object.freeze({ main: null, auxiliary: [null, null, null, null], speed: null });
@@ -37,6 +37,18 @@ const normalizeStock = (value) => Object.fromEntries(
     .map(([id, quantity]) => [id, Math.floor(finite(quantity, 0))])
     .filter(([id]) => id),
 );
+const normalizeDungeonRuns = (value) => Object.fromEntries(
+  Object.entries(record(value)).map(([dungeonId, rawRun]) => {
+    const run = record(rawRun);
+    const position = record(run.playerPosition);
+    return [dungeonId, {
+      runNumber: Math.max(1, Math.floor(finite(run.runNumber, 1, 1))),
+      active: Boolean(run.active),
+      defeatedSpawnIds: [...new Set(array(run.defeatedSpawnIds).map(String).filter(Boolean))],
+      playerPosition: { x: finite(position.x, 960), y: finite(position.y, 900) },
+    }];
+  }).filter(([dungeonId]) => /^[a-z0-9:_-]{1,80}$/i.test(dungeonId)),
+);
 
 export function createDefaultSaveData() {
   return {
@@ -59,6 +71,7 @@ export function createDefaultSaveData() {
     },
     world: {
       defeatedMonsterIds: [], playerPosition: { x: 980, y: 1260 }, miniMapVisitedPoints: [],
+      dungeonRuns: {},
       merchantStock: {}, merchantSpiritStones: 125850,
       completedQuestIds: [], sectProgress: {},
     },
@@ -118,6 +131,7 @@ function normalizeCurrentSave(input) {
       ...world,
       defeatedMonsterIds: array(world.defeatedMonsterIds),
       miniMapVisitedPoints: array(world.miniMapVisitedPoints),
+      dungeonRuns: normalizeDungeonRuns(world.dungeonRuns),
       // 商店库存的 0 表示已售罄，必须保留；背包的 0 才可以删除。
       merchantStock: normalizeStock(world.merchantStock),
       merchantSpiritStones: finite(world.merchantSpiritStones, defaults.world.merchantSpiritStones),
@@ -155,6 +169,14 @@ export const SAVE_MIGRATIONS = new Map([
       ...save.player,
       // 突破系统尚未开放时，全部旧档统一停在炼气阶段的 1000 修为上限。
       cultivationExpTarget: Math.max(1, Math.floor(finite(save.player?.cultivationExpTarget, 1000, 1))),
+    },
+  })],
+  [5, (save) => ({
+    ...save,
+    version: 6,
+    world: {
+      ...save.world,
+      dungeonRuns: normalizeDungeonRuns(save.world?.dungeonRuns),
     },
   })],
 ]);

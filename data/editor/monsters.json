@@ -18,9 +18,19 @@
       }
     ],
     "drops": [
+      "修炼经验 × 8",
       "灵石 × 3",
       "狼皮 × 1"
     ],
+    "ai": {
+      "patrolRadius": 110,
+      "detectionRadius": 230,
+      "disengageRadius": 360,
+      "leashRadius": 300,
+      "patrolSpeed": 38,
+      "chaseSpeed": 92,
+      "contactRadius": 72
+    },
     "imageData": "/public/assets/images/editor/monsters/monster-green-wood-wolf-imageData.webp",
     "appearance": {
       "mode": "static",
@@ -48,9 +58,19 @@
       }
     ],
     "drops": [
+      "修炼经验 × 20",
       "灵石 × 12",
       "土灵晶 × 1"
     ],
+    "ai": {
+      "patrolRadius": 80,
+      "detectionRadius": 190,
+      "disengageRadius": 320,
+      "leashRadius": 270,
+      "patrolSpeed": 24,
+      "chaseSpeed": 62,
+      "contactRadius": 80
+    },
     "imageData": "",
     "appearance": {
       "mode": "static",

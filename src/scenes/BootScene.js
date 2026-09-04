@@ -62,6 +62,10 @@ export class BootScene extends Phaser.Scene {
       this.scene.start(SceneKeys.VILLAGE, { interfaceId: sceneRoute.interfaceId });
       return;
     }
+    if (sceneRoute?.sceneKey === SceneKeys.MONSTER_CAVE) {
+      this.scene.start(SceneKeys.MONSTER_CAVE, { dungeonId: "monster-cave-1" });
+      return;
+    }
     this.scene.start(SceneKeys.VILLAGE);
   }
 }

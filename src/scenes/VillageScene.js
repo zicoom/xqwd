@@ -12,7 +12,7 @@ import { getBuildingTemplate, getNpcTemplate } from "../core/WorldTemplateStore.
 import { getBuildingAppearanceTextureKey, resolveBuildingAppearance } from "../core/BuildingAppearance.js";
 import { SceneKeys } from "../core/SceneKeys.js";
 import { addButton, addText, playUiClickSound, stopCultivationBackgroundMusic } from "../utils/UiHelpers.js";
-import { ChapterMapHud } from "../ui/ChapterMapHud.js";
+import { ChapterMapHud, preloadChapterMapHudAssets } from "../ui/ChapterMapHud.js";
 import { preloadPlayerTopToolbarAssets } from "../ui/PlayerTopToolbar.js";
 import {
   CharacterMenuPanel,
@@ -24,6 +24,7 @@ import { GameSettingsDialog, preloadGameSettingsAssets } from "../ui/settings/Ga
 import { configureFullHdScene, SCREEN_HEIGHT, SCREEN_WIDTH } from "../core/DisplayConfig.js";
 import { clearEditorRoute } from "../core/EditorRoute.js";
 import { rememberSceneRoute } from "../core/SceneResumeState.js";
+import { getWorldSceneDestination } from "../core/WorldSceneCatalog.js";
 import { getPlayerPortrait } from "../core/PortraitCatalog.js";
 import { exportLocalGameData, importLocalGameDataFromFile } from "../core/LocalDataTransfer.js";
 import { ItemCatalog } from "../domain/items/ItemCatalog.js";
@@ -36,11 +37,12 @@ import { CombatShortcutService } from "../domain/combat/CombatShortcutService.js
 import { SaveArchiveService } from "../domain/save/SaveArchiveService.js";
 import {
   getBuildingCollisionVertices,
-  getDistanceToBuildingCollision,
   isMovementBlockedByBuildings,
 } from "../domain/world/BuildingCollisionService.js";
 import { SectAccessService } from "../domain/world/SectAccessService.js";
 import { MapExplorationService } from "../domain/world/MapExplorationService.js";
+import { DungeonRunService } from "../domain/world/DungeonRunService.js";
+import { BuildingEntranceService } from "../domain/world/BuildingEntranceService.js";
 import { SaveArchiveRepository } from "../core/save/SaveArchiveRepository.js";
 import {
   ChapterQuestService,
@@ -51,8 +53,10 @@ import {
 import { NpcInteractionService } from "../domain/quests/NpcInteractionService.js";
 import { MerchantPanel } from "../ui/merchant/MerchantPanel.js";
 import { ItemRewardPopup } from "../ui/rewards/ItemRewardPopup.js";
-import { SectEntrancePrompt } from "../ui/sect/SectEntrancePrompt.js";
+import { BuildingEntrancePrompt } from "../ui/world/BuildingEntrancePrompt.js";
 import { createBuildingMapLabel } from "../ui/world/BuildingMapLabel.js";
+import { NpcProfilePanel, preloadNpcProfilePanelAssets } from "../ui/npc/NpcProfilePanel.js";
+import { ChapterDialoguePanel, preloadChapterDialogueAssets } from "../ui/dialogue/ChapterDialoguePanel.js";
 
 /**
  * 栖霞村探索场景。
@@ -146,19 +150,20 @@ export class VillageScene extends Phaser.Scene {
 
     // 大地图与门派内部共用同一个角色顶栏素材入口，图标路径和显示版本保持一致。
     preloadPlayerTopToolbarAssets(this);
+    // 第一章地图的日期、任务、观山镜、附近修士与角色资料墨刷使用独立语义化素材。
+    preloadChapterMapHudAssets(this);
+    preloadNpcProfilePanelAssets(this);
+    preloadChapterDialogueAssets(this);
+    this.load.image(
+      "chapter-quest-accepted-notice",
+      "./public/assets/images/pixso/chapter-map/quest-accepted-notice.png",
+    );
     // 主线任务方向箭头：素材本身默认朝右，运行时根据古潭位置旋转。
     this.load.image("quest-direction-arrow", "./public/assets/images/ui/chapter-map/quest-direction-arrow.png");
     // NPC 尚未制作地图立绘时使用的任务问号。
     this.load.image("npc-map-question-mark", "./public/assets/images/ui/chapter-map/npc-question-mark.png");
     // 建筑名称统一使用用户提供的 86×296 黑色竖向笔刷，不再显示小号描边文字。
     this.load.image("map-building-name-brush", "./public/assets/images/ui/chapter-map/building-name-brush.png");
-    // 附近修士资料卡的 Pixso 装饰线与按钮图标。
-    this.load.image("npc-profile-divider-top", "./public/assets/images/ui/npc-profile/profile-divider-top.png");
-    this.load.image("npc-profile-divider-center", "./public/assets/images/ui/npc-profile/profile-divider-center.png");
-    this.load.image("npc-profile-divider-bottom", "./public/assets/images/ui/npc-profile/profile-divider-bottom.png");
-    this.load.image("npc-profile-chat-icon", "./public/assets/images/ui/npc-profile/profile-chat-icon.png");
-    this.load.image("npc-profile-friend-icon", "./public/assets/images/ui/npc-profile/profile-friend-icon.png");
-
     // 商人界面使用用户提供的原始立绘、头像与草药图片，不以截图代替可交互的物品。
     const merchantPath = "./public/assets/images/merchant";
     this.load.image("merchant-profile-portrait", `${merchantPath}/merchant-portrait.png`);
@@ -242,6 +247,15 @@ export class VillageScene extends Phaser.Scene {
       world: gameState.world,
       save: saveFirstChapterProgress,
     });
+    this.dungeonRunService = new DungeonRunService({
+      world: gameState.world,
+      save: saveFirstChapterProgress,
+    });
+    // 所有可交互建筑先统一解析为入口；门派和独立场景只在点击入口按钮后才执行各自功能。
+    this.buildingEntranceService = new BuildingEntranceService({
+      resolveSect: (buildingObject) => this.sectAccessService.resolveForBuilding(buildingObject),
+      resolveSceneDestination: getWorldSceneDestination,
+    });
     this.mapExplorationService.reconcileLegacyState();
     this.merchantPanel = new MerchantPanel({ scene: this, shopService: this.shopService, save: saveFirstChapterProgress });
     this.characterMenu = new CharacterMenuPanel(this, {
@@ -280,7 +294,7 @@ export class VillageScene extends Phaser.Scene {
     this.mapTilesLoading = new Set();
     this.mapStreamElapsed = 0;
     this.drawQingyunMountain();
-    this.sectEntrancePrompt = new SectEntrancePrompt(this, (sect, buildingObject) => this.tryEnterSect(sect, buildingObject));
+    this.buildingEntrancePrompt = new BuildingEntrancePrompt(this, (entry) => this.activateBuildingEntrance(entry));
     // 读取地图编辑器保存的内容：在编辑器中放下的 NPC、怪物、建筑、传送点会出现在这里。
     this.renderEditorObjects();
     this.createPlayerAnimations();
@@ -338,39 +352,17 @@ export class VillageScene extends Phaser.Scene {
     this.createQuestGuide();
     this.createQuestAcceptedNotice();
 
-    // ── 附近修士人物对话：按 Pixso 稿做成「双人立绘 + 底部羊皮纸对话框」。 ──
-    this.dialog = this.add.container(0, 0).setScrollFactor(0).setVisible(false).setDepth(1500);
-    const dialogShade = this.add.rectangle(0, 0, 1920, 1080, 0x0b120c, 0.48).setOrigin(0);
-    const dialogPanel = this.add.graphics();
-    dialogPanel.fillStyle(0xd4b18d, 1);
-    // 对话区按效果图采用紧凑的 970 × 260 尺寸，避免遮住整张地图。
-    dialogPanel.fillRoundedRect(500, 760, 970, 260, 8);
-    dialogPanel.lineStyle(2, 0x755339, 1);
-    dialogPanel.strokeRoundedRect(500, 760, 970, 260, 8);
-    // 说话人名牌：棕色圆角、深色边线，压在羊皮纸上沿。
-    this.dialogNameTab = this.add.graphics();
-    this.drawDialogNameTab(508);
-    this.dialogNameText = addText(this, 556, 746, "", 16, "#fff4df", { strokeThickness: 1 }).setOrigin(0.5);
-    this.dialogText = addText(this, 535, 792, "", 16, "#3b291d", { wordWrap: { width: 885 }, lineSpacing: 6, strokeThickness: 0 });
-    // 左边为 NPC 对话立绘，右边为主角立绘；二者均停在对话框上沿，构图与效果图一致。
-    this.dialogPortrait = this.add.image(590, 760, "player-idle-5dir", 0)
-      .setOrigin(0.5, 1)
-      .setScale(0.58)
-      .setVisible(false);
-    this.dialogPlayerPortrait = this.add.image(1370, 760, "player-dialogue-portrait")
-      .setOrigin(0.5, 1)
-      .setDisplaySize(210, 330)
-      .setVisible(false)
-      .setAlpha(0.92);
-    this.dialogChoices = this.add.container(0, 0);
-    // 选项点击区单独置于最上层，避免容器缩放或遮罩拦截点击。
-    this.dialogChoiceHitAreas = [];
-    this.dialog.add([dialogShade, this.dialogPortrait, this.dialogPlayerPortrait, dialogPanel, this.dialogNameTab, this.dialogNameText, this.dialogText, this.dialogChoices]);
-    // 右下角提供小型返回按钮；Esc 也可关闭，避免它抢占对话内容的空间。
-    this.dialogReturnButton = addButton(this, 1390, 1042, 140, "返回地图", () => this.closeDialogue(), { size: 16, height: 40 })
-      .setScrollFactor(0)
-      .setDepth(1501)
-      .setVisible(false);
+    // 对话层的素材绘制与命中集中在 UI 组件；场景只保留剧情节点与任务回调。
+    this.dialogView = new ChapterDialoguePanel(this, {
+      onChoice: (choice) => this.chooseDialogueChoice(choice),
+    }).create();
+    // 兼容场景现有的对话状态流，文字内容仍由剧情数据驱动。
+    this.dialog = this.dialogView.root;
+    this.dialogNameText = this.dialogView.nameText;
+    this.dialogText = this.dialogView.bodyText;
+    this.dialogPortrait = this.dialogView.npcPortrait;
+    this.dialogPlayerPortrait = this.dialogView.playerPortrait;
+    this.dialogChoices = this.dialogView.choiceLayer;
     this.itemRewardPopup = new ItemRewardPopup(this);
 
     // “附近修士”卡片点击后出现的个人资料弹窗。
@@ -427,7 +419,7 @@ export class VillageScene extends Phaser.Scene {
       }
       if (!this.dialog.visible && !this.npcProfilePanel?.visible && !this.settingsPanel && !this.featurePanel && !this.characterMenu.visible && !this.chapterMapHud?.isPointerOverHud(uiPointer) && uiPointer.y < 915) {
         // 镜头开始滚动后，pointer.x/y 只是屏幕坐标；worldX/worldY 才是地图上的真实位置。
-        this.sectEntrancePrompt?.hide();
+        this.buildingEntrancePrompt?.hide();
         this.target = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
       }
     });
@@ -557,121 +549,20 @@ export class VillageScene extends Phaser.Scene {
     this.uiCamera.ignore(world);
   }
 
-  /** 用浏览器画布生成圆角渐变按钮，避免 Graphics 渐变出现可见的拼接线。 */
-  createProfileButtonTexture(key, width, height, topColor, bottomColor, borderColor) {
-    if (this.textures.exists(key)) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    const radius = 8;
-    const path = () => {
-      context.beginPath();
-      context.moveTo(radius, 1);
-      context.lineTo(width - radius, 1);
-      context.quadraticCurveTo(width - 1, 1, width - 1, radius);
-      context.lineTo(width - 1, height - radius);
-      context.quadraticCurveTo(width - 1, height - 1, width - radius, height - 1);
-      context.lineTo(radius, height - 1);
-      context.quadraticCurveTo(1, height - 1, 1, height - radius);
-      context.lineTo(1, radius);
-      context.quadraticCurveTo(1, 1, radius, 1);
-      context.closePath();
-    };
-    const gradient = context.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, topColor);
-    gradient.addColorStop(1, bottomColor);
-    context.fillStyle = gradient;
-    path();
-    context.fill();
-    // 仅三个资料卡按钮使用 1px 边线。
-    context.lineWidth = 1;
-    context.strokeStyle = borderColor;
-    path();
-    context.stroke();
-    this.textures.addCanvas(key, canvas);
-  }
-
   /** 建立「附近修士」的人物资料弹窗；资料来自 NPC 管理界面保存的模板。 */
   createNearbyNpcProfilePanel() {
-    this.npcProfilePanel = this.add.container(960, 540).setScrollFactor(0).setVisible(false).setDepth(1600);
-    const shade = this.add.rectangle(0, 0, 1920, 1080, 0x071009, 0.56).setInteractive();
-    const card = this.add.graphics();
-    card.fillStyle(0x241c13, 0.98);
-    // 按 Pixso 效果图：资料卡是窄而高的比例，不占满屏幕中央。
-    card.fillRoundedRect(-180, -350, 360, 750, 8);
-    // 最外层资料卡边线保持原来的 2px。
-    card.lineStyle(2, 0x87643f, 1);
-    card.strokeRoundedRect(-180, -350, 360, 750, 8);
-    // 三条由用户提供的原图装饰线：立绘下方、资料与属性之间、按钮上方。
-    const dividerTop = this.add.image(0, -70, "npc-profile-divider-top").setDisplaySize(312, 3);
-    const dividerCenter = this.add.image(0, 120, "npc-profile-divider-center").setDisplaySize(300, 12);
-    const dividerBottom = this.add.image(0, 265, "npc-profile-divider-bottom").setDisplaySize(312, 1);
-
-    this.npcProfilePortrait = this.add.image(0, -72, "player-idle-5dir", 0)
-      .setOrigin(0.5, 1)
-      .setScale(0.7);
-    this.npcProfileName = addText(this, -148, -37, "", 20, "#f5e2ba", { strokeThickness: 1 });
-    this.npcProfileRealm = addText(this, 148, -33, "", 13, "#d5c4a2", { strokeThickness: 0 }).setOrigin(1, 0);
-    this.npcProfileRows = [
-      addText(this, -148, 4, "", 13, "#a99c89", { strokeThickness: 0 }),
-      addText(this, -148, 31, "", 13, "#a99c89", { strokeThickness: 0 }),
-      addText(this, -148, 58, "", 13, "#a99c89", { strokeThickness: 0 }),
-      addText(this, -148, 85, "", 13, "#a99c89", { strokeThickness: 0 }),
-    ];
-    this.npcProfileValues = [
-      addText(this, 148, 4, "", 13, "#eee0c8", { strokeThickness: 0 }).setOrigin(1, 0),
-      addText(this, 148, 31, "", 13, "#eee0c8", { strokeThickness: 0 }).setOrigin(1, 0),
-      addText(this, 148, 58, "", 13, "#eee0c8", { strokeThickness: 0 }).setOrigin(1, 0),
-      addText(this, 148, 85, "", 13, "#eee0c8", { strokeThickness: 0 }).setOrigin(1, 0),
-    ];
-
-    const statBox = this.add.graphics();
-    statBox.fillStyle(0x18140f, 0.88);
-    [-148, 8].forEach((x) => {
-      statBox.fillRoundedRect(x, 145, 140, 28, 3);
-      statBox.fillRoundedRect(x, 183, 140, 28, 3);
-      statBox.fillRoundedRect(x, 221, 140, 28, 3);
+    this.npcProfileView = new NpcProfilePanel(this, {
+      onClose: () => this.closeNearbyNpcProfile(),
+      onChat: (object) => {
+        this.closeNearbyNpcProfile();
+        if (object) this.interactWithMapObject(object);
+      },
+      onFriend: () => this.showNpcProfileNotice("好感系统将在后续章节开放。"),
+      onAction: () => this.activateNpcProfileAction(),
     });
-    this.npcProfileStats = [
-      addText(this, -136, 151, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-      addText(this, 20, 151, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-      addText(this, -136, 189, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-      addText(this, 20, 189, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-      addText(this, -136, 227, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-      addText(this, 20, 227, "", 12, "#d6c9b0", { strokeThickness: 0 }),
-    ];
-
-    // 关闭按钮与“村长”标题在同一水平线上，符合资料区的阅读顺序。
-    const close = this.add.rectangle(145, -37, 24, 24, 0x38291c, 1).setInteractive({ useHandCursor: true });
-    const closeText = addText(this, 145, -37, "×", 16, "#c9b797", { strokeThickness: 0 }).setOrigin(0.5);
-    this.createProfileButtonTexture("npc-profile-button-chat", 145, 46, "#3c674b", "#234531", "#5d8065");
-    this.createProfileButtonTexture("npc-profile-button-friend", 145, 46, "#84651f", "#503b13", "#987936");
-    this.createProfileButtonTexture("npc-profile-button-battle", 300, 44, "#684549", "#512d31", "#87595c");
-    this.createProfileButtonTexture("npc-profile-button-shop", 300, 44, "#80593b", "#4e3021", "#b28152");
-    const chatBackground = this.add.image(-77, 305, "npc-profile-button-chat").setInteractive({ useHandCursor: true });
-    const chatIcon = this.add.image(-108, 305, "npc-profile-chat-icon").setDisplaySize(12, 11);
-    const chatText = addText(this, -61, 305, "交谈", 16, "#fff3da", { strokeThickness: 0 }).setOrigin(0.5);
-    chatBackground.on("pointerover", () => chatBackground.setTint(0xc5ddc8));
-    chatBackground.on("pointerout", () => chatBackground.clearTint());
-    const friendBackground = this.add.image(77, 305, "npc-profile-button-friend").setInteractive({ useHandCursor: true });
-    const friendIcon = this.add.image(43, 305, "npc-profile-friend-icon").setDisplaySize(15, 13);
-    const friendText = addText(this, 96, 305, "加为好友", 15, "#fff3da", { strokeThickness: 0 }).setOrigin(0.5);
-    // 第三行会随人物身份切换：普通 NPC 是“战斗”，商人则是“购物”。
-    this.npcProfileActionBackground = this.add.image(0, 360, "npc-profile-button-battle").setInteractive({ useHandCursor: true });
-    this.npcProfileActionIcon = addText(this, -25, 360, "⚔", 21, "#f4d28e", { strokeThickness: 0 }).setOrigin(0.5);
-    this.npcProfileActionText = addText(this, 20, 360, "战斗", 17, "#fff0d9", { strokeThickness: 0 }).setOrigin(0.5);
-    this.npcProfileActionBackground.on("pointerover", () => this.npcProfileActionBackground.setTint(0xe3c7ca));
-    this.npcProfileActionBackground.on("pointerout", () => this.npcProfileActionBackground.clearTint());
-    // 所有资料卡按钮都由场景最上层的统一点击判断处理，避免同一次点击
-    // 同时关闭卡片、打开商店，又继续穿透到大地图。
-    this.npcProfileNotice = addText(this, 0, 280, "", 13, "#d8c9a5", { strokeThickness: 0 }).setOrigin(0.5);
-    this.npcProfilePanel.add([
-      shade, card, this.npcProfilePortrait, dividerTop, this.npcProfileName, this.npcProfileRealm,
-      ...this.npcProfileRows, ...this.npcProfileValues, statBox, ...this.npcProfileStats,
-      dividerCenter, dividerBottom, close, closeText, chatBackground, chatIcon, chatText,
-      friendBackground, friendIcon, friendText, this.npcProfileActionBackground, this.npcProfileActionIcon, this.npcProfileActionText, this.npcProfileNotice,
-    ]);
+    this.npcProfileView.create();
+    // 保留容器引用，兼容场景现有的输入拦截与 ESC 检查。
+    this.npcProfilePanel = this.npcProfileView.panel;
   }
 
   /** 打开个人资料，并把 NPC 管理中填写的头像、立绘、属性显示到对应位置。 */
@@ -682,64 +573,23 @@ export class VillageScene extends Phaser.Scene {
     this.target = null;
     this.npcProfileObject = object;
     this.npcProfileIsMerchant = this.isMerchantNpc(object);
-    // 资料卡标题只显示称谓；“栖霞村”属于地点信息，按效果图不放在标题里。
-    this.npcProfileName.setText((object.name || "未命名修士").replace(/^栖霞村/, ""));
-    this.npcProfileRealm.setText("");
-    this.npcProfileRows[0].setText("境界"); this.npcProfileValues[0].setText(profile.realm || "炼气初期");
-    this.npcProfileRows[1].setText("性别"); this.npcProfileValues[1].setText(profile.gender || "未知");
-    this.npcProfileRows[2].setText("宗门"); this.npcProfileValues[2].setText(profile.sect || "无门派");
-    this.npcProfileRows[3].setText("身份"); this.npcProfileValues[3].setText(profile.identity || "散修");
-    const stats = [
-      `✦ 气血  ${profile.lifespan || 0}/100`, `✦ 灵力  ${profile.spirit || 0}/50`,
-      `⚔ 攻击  ${profile.attack || 0}`, `○ 防御  ${profile.defense || 0}`,
-      `✦ 身法  ${profile.agility || 0}`, `◇ 灵根  ${Object.values(profile.roots || {}).filter((value) => Number(value) > 0).join("、") || "无"}`,
-    ];
-    this.npcProfileStats.forEach((text, index) => text.setText(stats[index]));
-    this.npcProfileNotice.setText("");
-    if (this.npcProfileIsMerchant) {
-      this.npcProfilePortrait.setTexture("merchant-profile-portrait").setOrigin(0.5, 1).setPosition(0, -72).setDisplaySize(203, 270);
-      this.npcProfileActionBackground.setTexture("npc-profile-button-shop").clearTint();
-      this.npcProfileActionIcon.setText("🛒").setFontSize(17);
-      this.npcProfileActionText.setText("购物");
-    } else {
-      this.setNpcProfilePortrait(template.portraitData || template.avatarData || template.imageData || "", object.id);
-      this.npcProfileActionBackground.setTexture("npc-profile-button-battle").clearTint();
-      this.npcProfileActionIcon.setText("⚔").setFontSize(21);
-      this.npcProfileActionText.setText("战斗");
-    }
-    this.npcProfilePanel.setAlpha(0).setVisible(true);
-    this.tweens.killTweensOf(this.npcProfilePanel);
-    this.tweens.add({ targets: this.npcProfilePanel, alpha: 1, duration: 180, ease: "Sine.Out" });
-  }
-
-  /** 将上传的 NPC 立绘安全显示在资料卡上。 */
-  setNpcProfilePortrait(imageData, objectId) {
-    if (!imageData) {
-      this.npcProfilePortrait.setTexture("player-idle-5dir", 0).setOrigin(0.5, 1).setPosition(0, -72).setScale(0.7);
-      return;
-    }
-    const textureKey = `npc-profile-${objectId}`;
-    const apply = () => {
-      if (!this.npcProfilePanel?.visible || this.npcProfileObject?.id !== objectId) return;
-      const source = this.textures.get(textureKey).getSourceImage();
-      const scale = Math.min(240 / source.width, 270 / source.height);
-      this.npcProfilePortrait.setTexture(textureKey).setOrigin(0.5, 1).setPosition(0, -72).setDisplaySize(source.width * scale, source.height * scale);
-    };
-    if (this.textures.exists(textureKey)) { apply(); return; }
-    const image = new Image();
-    image.onload = () => { this.textures.addImage(textureKey, image); apply(); };
-    image.onerror = () => this.npcProfilePortrait.setTexture("player-idle-5dir", 0).setOrigin(0.5, 1).setPosition(0, -72).setScale(0.7);
-    image.src = imageData;
+    this.npcProfileView.open({
+      object,
+      isMerchant: this.npcProfileIsMerchant,
+      name: (object.name || "未命名修士").replace(/^栖霞村/, ""),
+      profile,
+      portraitData: template.portraitData || template.avatarData || template.imageData || "",
+    });
   }
 
   closeNearbyNpcProfile() {
-    this.npcProfilePanel?.setVisible(false);
+    this.npcProfileView?.close();
     this.npcProfileObject = null;
     this.npcProfileIsMerchant = false;
   }
 
   showNpcProfileNotice(message) {
-    this.npcProfileNotice?.setText(message);
+    this.npcProfileView?.showNotice(message);
   }
 
   /** 商人身份由 NPC 模板的 merchant 标记控制；旧 NPC 也可直接把身份或名称写成“商人”。 */
@@ -779,23 +629,7 @@ export class VillageScene extends Phaser.Scene {
    * 这避免 Phaser 容器缩放时，透明遮罩盖住图片按钮的实际点击区域。
    */
   handleNpcProfilePointer(pointer) {
-    const x = pointer.x - 960;
-    const y = pointer.y - 540;
-    if (x >= 133 && x <= 157 && y >= -49 && y <= -25) {
-      this.closeNearbyNpcProfile();
-      return;
-    }
-    if (y >= 282 && y <= 328 && x >= -150 && x <= -4) {
-      const object = this.npcProfileObject;
-      this.closeNearbyNpcProfile();
-      if (object) this.interactWithMapObject(object);
-      return;
-    }
-    if (y >= 282 && y <= 328 && x >= 4 && x <= 150) {
-      this.showNpcProfileNotice("好感系统将在后续章节开放。");
-      return;
-    }
-    if (y >= 338 && y <= 382 && x >= -150 && x <= 150) this.activateNpcProfileAction();
+    this.npcProfileView?.handlePointer(pointer);
   }
 
 
@@ -1322,7 +1156,7 @@ export class VillageScene extends Phaser.Scene {
     this.chapterMapHud?.updateMiniMap(this.player.x, this.player.y, this.worldSize);
     this.updateQuestGuide();
     this.updateNearbyInteraction();
-    this.updateNearbySectEntrance();
+    this.updateNearbyBuildingEntrance();
     this.updateQingyunAdventureInteraction();
   }
 
@@ -1335,6 +1169,8 @@ export class VillageScene extends Phaser.Scene {
     const interactionRange = 74;
     let nearestDistance = nearbyCardRange;
     this.editorActors?.forEach((actor) => {
+      // 可交互建筑统一由建筑上方的“进入”按钮负责，不能再被 E 键或整张建筑图片直接触发。
+      if (this.buildingEntranceService.resolve(actor.object)) return;
       const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, actor.object.x, actor.object.y);
       if (distance < nearestDistance) {
         nearest = actor;
@@ -1350,7 +1186,7 @@ export class VillageScene extends Phaser.Scene {
       this.nearbyNameText?.setText(nearest.object.name);
       this.nearbyRealmText?.setText(canInteract
         ? (nearest.object.type === "monster" ? "妖兽 · 可进入战斗" : isMerchant ? "商人 · 可购物" : "练气初期 · 可交谈")
-        : `在附近 · 靠近后可${isMerchant ? "购物" : "交谈"}`);
+        : `靠近后·可${isMerchant ? "购物" : "交谈"}`);
       const action = nearest.object.type === "monster" ? "战斗" : isMerchant ? "购物" : nearest.object.type === "npc" ? "对话" : "查看";
       this.operationHint.setText(canInteract ? `靠近 ${nearest.object.name}：按 E ${action}。` : `发现 ${nearest.object.name}：继续靠近后可按 E ${action}。`);
       if (canInteract && Phaser.Input.Keyboard.JustDown(this.keys.E)) this.interactWithMapObject(nearest.object);
@@ -1396,54 +1232,87 @@ export class VillageScene extends Phaser.Scene {
     } else if (object.type === "monster") {
       this.scene.start(SceneKeys.BATTLE, { mapMonster: object });
     } else if (object.type === "building") {
-      const sect = this.sectAccessService.resolveForBuilding(object);
-      if (sect) {
-        const appearance = resolveBuildingAppearance(object.buildingTemplate);
-        this.showSectEntrancePrompt(sect, object, appearance, Number(object.scale) || 1);
-      } else {
-        this.dialogNameText.setText(object.name || "建筑");
-        this.openDialogue([object.buildingTemplate?.interactionText || `${object.name}：目前是第一章原型建筑。`]);
-      }
+      const entry = this.buildingEntranceService.resolve(object);
+      if (entry) this.showBuildingEntrancePrompt(entry);
+      else this.openBuildingDialogue(object);
     } else {
       this.dialogNameText.setText(object.name || "提示");
       this.openDialogue([`${object.name}：传送点已被记录。后续区域地图完成后，可以在这里配置目的地。`]);
     }
   }
 
-  /** 靠近门派碰撞边缘后自动显示入口；离开范围立即隐藏。 */
-  updateNearbySectEntrance() {
-    let nearest = null;
-    this.editorActors?.forEach((actor) => {
-      if (actor.object.type !== "building") return;
-      const sect = this.sectAccessService.resolveForBuilding(actor.object);
-      if (!sect) return;
-      const distance = getDistanceToBuildingCollision(this.player, actor.object);
-      const range = Math.max(0, Number(sect.building?.autoPromptRange) || 320);
-      if (distance > range || (nearest && distance >= nearest.distance)) return;
-      nearest = { object: actor.object, sect, distance };
-    });
-    if (!nearest) {
-      this.sectEntrancePrompt.hide();
+  /** 建筑配置只能通过稳定目标白名单启动场景，不能直接执行编辑器保存的任意场景字符串。 */
+  enterWorldSceneBuilding(object) {
+    const interaction = object?.buildingTemplate?.interaction;
+    const destination = interaction?.enabled ? getWorldSceneDestination(interaction.targetId) : null;
+    if (!destination) {
+      this.dialogNameText.setText(object?.name || "建筑");
+      this.openDialogue(["此处的空间阵纹尚未稳定，暂时无法进入。"]);
       return;
     }
-    const appearance = resolveBuildingAppearance(nearest.object.buildingTemplate);
-    this.showSectEntrancePrompt(nearest.sect, nearest.object, appearance, Number(nearest.object.scale) || 1);
+    this.target = null;
+    this.rememberPlayerPosition();
+    if (destination.dungeon) {
+      const result = this.dungeonRunService.beginRun(destination.id, destination.spawnPoint);
+      if (!result.ok) return;
+      this.scene.start(destination.sceneKey, { dungeonId: destination.id });
+      return;
+    }
+    saveFirstChapterProgress();
+    this.scene.start(destination.sceneKey);
   }
 
-  /** 把自动出现的入口按钮放在建筑画面中央。 */
-  showSectEntrancePrompt(sect, buildingObject, appearance, instanceScale = 1) {
+  /** 靠近任意可交互建筑后显示入口；离开范围立即隐藏。 */
+  updateNearbyBuildingEntrance() {
+    const buildings = [];
+    this.editorActors?.forEach((actor) => {
+      if (actor.object.type === "building") buildings.push(actor.object);
+    });
+    const nearest = this.buildingEntranceService.findNearest(this.player, buildings);
+    if (!nearest) {
+      this.buildingEntrancePrompt.hide();
+      return;
+    }
+    this.showBuildingEntrancePrompt(nearest);
+    this.operationHint.setText(`已靠近 ${nearest.buildingObject.name || "建筑"}：点击建筑上方的“进入”按钮。`);
+  }
+
+  /** 把自动出现的入口按钮放在建筑上方，并限制在当前镜头的安全区域内。 */
+  showBuildingEntrancePrompt(entry) {
+    const buildingObject = entry.buildingObject;
+    const appearance = resolveBuildingAppearance(buildingObject.buildingTemplate);
+    const instanceScale = Number(buildingObject.scale) || 1;
     const displayedHeight = (Number(appearance?.height) || 256) * instanceScale;
     const originOffset = appearance?.anchor === "center" ? 0 : displayedHeight / 2;
     const view = this.cameras.main.worldView;
     // 巨型建筑可能只有一角露在屏幕里；入口按钮要限制在当前可视区域，且避开右侧 HUD。
     const x = Phaser.Math.Clamp(buildingObject.x, view.left + 150, view.right - 400);
     const y = Phaser.Math.Clamp(buildingObject.y - originOffset, view.top + 150, view.bottom - 180);
-    this.sectEntrancePrompt.show({ sect, buildingObject, x, y });
+    this.buildingEntrancePrompt.show({ entry, x, y });
+  }
+
+  /** 只有通用入口按钮会调用这里；建筑图片和 E 键都不会直接执行建筑功能。 */
+  activateBuildingEntrance(entry) {
+    this.buildingEntrancePrompt.hide();
+    if (entry.kind === "sect") {
+      this.tryEnterSect(entry.sect);
+      return;
+    }
+    if (entry.kind === "scene") {
+      this.enterWorldSceneBuilding(entry.buildingObject);
+      return;
+    }
+    this.openBuildingDialogue(entry.buildingObject);
+  }
+
+  openBuildingDialogue(object) {
+    this.dialogNameText.setText(object?.name || "建筑");
+    this.openDialogue([object?.buildingTemplate?.interactionText || `${object?.name || "建筑"}：目前是第一章原型建筑。`]);
   }
 
   /** 门派入口统一走准入领域服务；令牌只判定持有，不会被消耗。 */
   tryEnterSect(sect) {
-    this.sectEntrancePrompt.hide();
+    this.buildingEntrancePrompt.hide();
     const access = this.sectAccessService.evaluate(sect.id);
     if (!access.ok) {
       this.dialogNameText.setText(sect.name);
@@ -1486,46 +1355,15 @@ export class VillageScene extends Phaser.Scene {
     this.dialogChoiceDelay = null;
     this.clearDialogueChoiceHitAreas();
     this.setQuestGuideVisible(false);
-    this.dialog.setVisible(true);
-    this.dialogReturnButton.setVisible(false);
-    // 流雨属于对话固定角色，不再因 NPC 尚未上传立绘而被一并隐藏。
-    this.dialogPlayerPortrait.setVisible(Boolean(this.dialogTree || portraitData));
+    this.dialogView.show();
     this.setDialoguePortrait(portraitData);
     this.setDialogueSpeaker("npc");
     this.showCurrentDialogueLine();
   }
 
-  /** 切换对话半身立绘；没有上传时仍保持紧凑对话版式。 */
+  /** 切换对话半身立绘；尺寸适配与异步纹理保护由对话 UI 统一处理。 */
   setDialoguePortrait(portraitData) {
-    if (!portraitData) {
-      this.dialogPortrait.setVisible(false);
-      this.dialogText.setPosition(535, 792).setWordWrapWidth(885);
-      return;
-    }
-    const textureKey = "npc-dialogue-portrait";
-    const requestId = (this.dialogPortraitRequestId || 0) + 1;
-    this.dialogPortraitRequestId = requestId;
-    const applyPortrait = () => {
-      // 只允许最后一次打开的对话更新画面，防止退出后旧图片异步回来覆盖新状态。
-      if (!this.dialog.active || !this.dialog.visible || requestId !== this.dialogPortraitRequestId) return;
-      const source = this.textures.get(textureKey).getSourceImage();
-      const scale = Math.min(260 / source.width, 360 / source.height);
-      this.dialogPortrait.setTexture(textureKey).setOrigin(0.5, 1).setPosition(590, 760).setDisplaySize(source.width * scale, source.height * scale).setVisible(true);
-      this.dialogText.setPosition(535, 792).setWordWrapWidth(885);
-    };
-    const image = new Image();
-    image.onload = () => {
-      if (requestId !== this.dialogPortraitRequestId || !this.dialog.visible) return;
-      if (this.textures.exists(textureKey)) this.textures.remove(textureKey);
-      this.textures.addImage(textureKey, image);
-      applyPortrait();
-    };
-    image.onerror = () => {
-      if (requestId !== this.dialogPortraitRequestId) return;
-      this.dialogPortrait.setVisible(false);
-      this.dialogText.setPosition(535, 792).setWordWrapWidth(885);
-    };
-    image.src = portraitData;
+    this.dialogView.setNpcPortrait(portraitData);
   }
 
   showCurrentDialogueLine() {
@@ -1552,58 +1390,28 @@ export class VillageScene extends Phaser.Scene {
     if (this.dialogNameText.text !== "村长") return String(text || "");
     return String(text || "")
       .replace(/(?:栖霞村)?村长：?/g, "")
-      .replace(/\s*\n\s*/g, " ")
+      .replace(/\s*\n\s*/g, "")
       .trim();
-  }
-
-  /** 重画姓名标签；NPC 在左，主角发言时移到右侧。 */
-  drawDialogNameTab(x) {
-    this.dialogNameTab.clear();
-    this.dialogNameTab.fillStyle(0xb7632f, 1);
-    this.dialogNameTab.fillRoundedRect(x, 730, 96, 32, 5);
-    this.dialogNameTab.lineStyle(2, 0x63351f, 1);
-    this.dialogNameTab.strokeRoundedRect(x, 730, 96, 32, 5);
-    this.dialogNameTab.lineStyle(1, 0xd28a50, 0.7);
-    this.dialogNameTab.strokeRoundedRect(x + 2, 732, 92, 28, 4);
   }
 
   /** 仅显示当前说话者的立绘：村长发言时不显示流雨，流雨发言时再显示她。 */
   setDialogueSpeaker(speaker) {
-    const playerSpeaking = speaker === "player";
     this.dialogSpeaker = speaker;
-    this.dialogPortrait.setAlpha(playerSpeaking ? 0.28 : 1);
-    this.dialogPlayerPortrait.setVisible(playerSpeaking).setAlpha(1);
-    const tabX = playerSpeaking ? 1322 : 508;
-    this.drawDialogNameTab(tabX);
-    this.dialogNameText
-      .setPosition(tabX + 48, 746)
-      .setText(playerSpeaking ? gameState.player.name : (this.dialogNpcName || "修士"));
+    this.dialogView.setSpeaker({
+      speaker,
+      npcName: this.dialogNpcName || "修士",
+      playerName: gameState.player.name,
+    });
   }
 
   renderDialogueChoices(choices) {
-    this.dialogChoices.removeAll(true);
-    this.clearDialogueChoiceHitAreas();
     this.currentDialogueChoices = choices;
-    choices.slice(0, 4).forEach((choice, index) => {
-      // 文字保持效果图的轻量样式，整行点击由下方透明区域处理。
-      const label = addText(this, 545, 864 + index * 34, `${index + 1}.  ${choice.text}`, 16, "#4d3326", { strokeThickness: 0 });
-      this.dialogChoices.add(label);
-      const hitArea = this.add.zone(985, 864 + index * 34, 880, 32)
-        .setScrollFactor(0)
-        .setDepth(1502)
-        .setInteractive({ useHandCursor: true });
-      hitArea.on("pointerdown", () => this.chooseDialogueChoice(choice));
-      this.dialogChoiceHitAreas.push(hitArea);
-    });
+    this.dialogView.renderChoices(choices);
   }
 
-  /** 移除对话专用透明点击层，退出与再次进入不会遗留在地图上。 */
+  /** 移除对话选项；退出与再次进入不会遗留可点击区域。 */
   clearDialogueChoiceHitAreas() {
-    (this.dialogChoiceHitAreas || []).forEach((hitArea) => {
-      hitArea.removeInteractive();
-      hitArea.destroy();
-    });
-    this.dialogChoiceHitAreas = [];
+    this.dialogView?.clearChoices();
   }
 
   chooseDialogueChoice(choice) {
@@ -1657,7 +1465,7 @@ export class VillageScene extends Phaser.Scene {
     // 分支选择由每行透明点击区处理，避免页面缩放后坐标换算出现偏差。
     if (choices.length) return;
     // 没有选项的普通对话，可直接点击羊皮纸继续阅读。
-    if (!choices.length && pointer.x >= 500 && pointer.x <= 1470 && pointer.y >= 760 && pointer.y <= 1020) this.advanceDialogue();
+    if (!choices.length && this.dialogView.containsBodyPoint(pointer)) this.advanceDialogue();
   }
 
   /** 显示或隐藏当前正在对话的地图 NPC 引导标记。 */
@@ -1674,10 +1482,7 @@ export class VillageScene extends Phaser.Scene {
   }
 
   finishDialogue() {
-    this.dialog.setVisible(false);
-    this.dialogPortrait.setVisible(false);
-    this.dialogPlayerPortrait.setVisible(false);
-    this.dialogReturnButton.setVisible(false);
+    this.dialogView.hide();
     this.renderDialogueChoices([]);
     this.dialogTree = null;
     this.dialogPendingChoice = null;
@@ -1696,10 +1501,7 @@ export class VillageScene extends Phaser.Scene {
    * 这个方法也可复用于今后的任务对话、商店对话等场景。
    */
   closeDialogue() {
-    this.dialog.setVisible(false);
-    this.dialogPortrait.setVisible(false);
-    this.dialogPlayerPortrait.setVisible(false);
-    this.dialogReturnButton.setVisible(false);
+    this.dialogView.hide();
     this.renderDialogueChoices([]);
     this.dialogTree = null;
     this.dialogFinish = null;
@@ -1892,11 +1694,10 @@ export class VillageScene extends Phaser.Scene {
       // 放在对话遮罩之上，接任务时玩家一定能看到。
       .setDepth(1700)
       .setVisible(false);
-    const panel = this.add.graphics();
-    // 任务提示严格按效果稿：550 × 200、10px 圆角、没有额外描边或连线。
-    panel.fillStyle(0x151d25, 0.97);
-    panel.fillRoundedRect(-275, -100, 550, 200, 10);
-    const title = addText(this, 0, -27, "主线任务已接取", 28, "#F1C35C", { strokeThickness: 0 })
+    // 使用用户提供的墨金纹样完整底板，按效果图精确显示为 585×190。
+    const panel = this.add.image(0, 0, "chapter-quest-accepted-notice")
+      .setDisplaySize(585, 200);
+    const title = addText(this, 0, -17, "主线任务已接取", 28, "#F1C35C", { strokeThickness: 0 })
       .setOrigin(0.5)
       .setAlign("center");
     const detail = addText(this, 0, 33, "调查青云山异光 · 前往古潭问道台", 20, "#747665", { strokeThickness: 0 })

@@ -21,6 +21,7 @@ const DEFAULT_MONSTERS = [
     defense: 2,
     skills: [{ name: "撕咬", damage: 8, qiCost: 0, cooldown: 0 }],
     drops: ["灵石 × 3", "狼皮 × 1"],
+    ai: { patrolRadius: 110, detectionRadius: 230, disengageRadius: 360, leashRadius: 300, patrolSpeed: 38, chaseSpeed: 92, contactRadius: 72 },
     imageData: "",
     soundUrl: "",
   },
@@ -36,6 +37,7 @@ const DEFAULT_MONSTERS = [
     defense: 6,
     skills: [{ name: "岩刺", damage: 14, qiCost: 4, cooldown: 1 }],
     drops: ["灵石 × 12", "土灵晶 × 1"],
+    ai: { patrolRadius: 80, detectionRadius: 190, disengageRadius: 320, leashRadius: 270, patrolSpeed: 24, chaseSpeed: 62, contactRadius: 80 },
     imageData: "",
     soundUrl: "",
   },
@@ -63,6 +65,15 @@ export function normalizeMonster(monster = {}) {
       cooldown: toNumber(skill.cooldown, 0, 0, 99),
     })) : [],
     drops: Array.isArray(monster.drops) ? monster.drops.filter(Boolean) : [],
+    ai: {
+      patrolRadius: toNumber(monster.ai?.patrolRadius, 90, 0, 300),
+      detectionRadius: toNumber(monster.ai?.detectionRadius, 210, 60, 800),
+      disengageRadius: toNumber(monster.ai?.disengageRadius, 350, 100, 1000),
+      leashRadius: toNumber(monster.ai?.leashRadius, 300, 100, 800),
+      patrolSpeed: toNumber(monster.ai?.patrolSpeed, 32, 0, 250),
+      chaseSpeed: toNumber(monster.ai?.chaseSpeed, 78, 1, 350),
+      contactRadius: toNumber(monster.ai?.contactRadius, 72, 30, 160),
+    },
     imageData,
     // 当前使用 staticFallback；animation 为未来序列帧、图集或其他动态立绘保留稳定接口。
     appearance: {

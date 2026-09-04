@@ -1,4 +1,12 @@
-import { createMapObject, getMapObjects, MAP_OBJECT_TYPES, saveMapObjects } from "../core/MapContentStore.js";
+import {
+  createMapObject,
+  createMapRegion,
+  getMapObjects,
+  getMapRegions,
+  MAP_OBJECT_TYPES,
+  MAP_REGION_TYPES,
+  saveMapContentBundle,
+} from "../core/MapContentStore.js";
 import { MAP_DEFINITIONS, getMapDefinition } from "../core/MapCatalog.js";
 import { getMonsterTemplates } from "../core/MonsterStore.js";
 import { getBuildingTemplates, getNpcTemplates } from "../core/WorldTemplateStore.js";
@@ -6,12 +14,18 @@ import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../cor
 import { getBuildingAppearanceTextureKey, resolveBuildingAppearance } from "../core/BuildingAppearance.js";
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
+import { isPointInMapRegion } from "../domain/world/MapNavigationService.js";
 import { addText } from "../utils/UiHelpers.js";
 
 const CATEGORIES = [
   ["building", "建筑"], ["npc", "NPC"], ["monster", "怪物"], ["herb", "灵草"],
-  ["mineral", "矿石"], ["portal", "传送"], ["trigger", "触发"],
+  ["mineral", "矿石"], ["portal", "传送"], ["trigger", "触发"], ["region", "区域"],
 ];
+
+const REGION_TEMPLATES = Object.freeze([
+  Object.freeze({ id: "walkable", name: "可行走区域", type: "walkable" }),
+  Object.freeze({ id: "blocked", name: "阻挡区域", type: "blocked" }),
+]);
 
 const SIDEBAR_WIDTH = 348;
 const MAP_VIEW_WIDTH = 1920 - SIDEBAR_WIDTH;
@@ -26,6 +40,9 @@ export class MapEditorScene extends Phaser.Scene {
     for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       this.load.image(this.tileKey("qingyun-mountain", x, y), this.tilePath(x, y));
     }
+    MAP_DEFINITIONS.filter((map) => map.kind === "image" && map.backgroundPath).forEach((map) => {
+      this.load.image(`editor-${map.id}-background`, map.backgroundPath);
+    });
     this.load.spritesheet("editor-npc-preview", "./public/assets/images/characters/player-idle-5dir.png", { frameWidth: 256, frameHeight: 256 });
     this.load.image("editor-monster-preview", "./public/assets/images/battle/swordsman.png");
   }
@@ -35,6 +52,7 @@ export class MapEditorScene extends Phaser.Scene {
     this.activeMapId = "qingyun-mountain";
     this.mapConfig = getMapDefinition(this.activeMapId);
     this.mapDrafts = new Map();
+    this.mapRegionDrafts = new Map();
     this.historyByMap = new Map();
     this.redoByMap = new Map();
     this.tiles = new Map();
@@ -50,10 +68,13 @@ export class MapEditorScene extends Phaser.Scene {
       npc: null,
       building: null,
       portal: null,
+      region: null,
     };
     this.selectedCategory = "monster";
     this.templateListStart = 0;
     this.selectedObjectId = null;
+    this.selectedRegionId = null;
+    this.pendingRegion = null;
     this.streamElapsed = 0;
 
     this.mapCamera = this.cameras.main.setViewport(SIDEBAR_WIDTH, 0, MAP_VIEW_WIDTH, 1080).setBackgroundColor("#223a38");
@@ -96,12 +117,18 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   loadMap(mapId, remember = true) {
-    if (remember && this.mapObjects) this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+    if (remember && this.mapObjects) {
+      this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
+      this.mapRegionDrafts.set(this.activeMapId, this.clone(this.mapRegions || []));
+    }
     if (remember) this.clearPendingTemplateSelection();
+    this.pendingRegion = null;
+    this.selectedRegionId = null;
     this.clearWorld();
     this.activeMapId = mapId;
     this.mapConfig = getMapDefinition(mapId);
     this.mapObjects = this.mapDrafts.has(mapId) ? this.clone(this.mapDrafts.get(mapId)) : getMapObjects(mapId);
+    this.mapRegions = this.mapRegionDrafts.has(mapId) ? this.clone(this.mapRegionDrafts.get(mapId)) : getMapRegions(mapId);
     this.mapCamera.setBounds(0, 0, this.mapConfig.worldWidth, this.mapConfig.worldHeight);
     // 进入地图时铺满编辑画布；“全局视图”按钮仍可缩放到完整地图。
     this.mapCamera.setZoom(this.coverZoom()).centerOn(this.mapConfig.worldWidth / 2, this.mapConfig.worldHeight / 2);
@@ -109,7 +136,8 @@ export class MapEditorScene extends Phaser.Scene {
     if (this.mapConfig.kind === "tiles") {
       for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) this.showTile(x, y);
       this.refreshTiles();
-    } else this.drawLuanxingPlaceholder();
+    } else if (this.mapConfig.kind === "image") this.drawImageMap();
+    else this.drawLuanxingPlaceholder();
     this.renderMarkers();
     if (remember) {
       this.buildUi();
@@ -121,6 +149,8 @@ export class MapEditorScene extends Phaser.Scene {
     for (const object of this.tiles.values()) object.destroy();
     for (const object of this.markers.values()) object.destroy();
     this.worldDecorations.forEach((object) => object.destroy());
+    this.regionOverlay?.destroy();
+    this.regionOverlay = null;
     this.tiles.clear(); this.markers.clear(); this.worldDecorations = [];
   }
 
@@ -134,6 +164,17 @@ export class MapEditorScene extends Phaser.Scene {
     const hint = addText(this, width / 2, height / 2 + 90, "第二张大地图已建立 · 等待导入乱星海底图", 48, "#c1deda", { origin: 0.5 });
     this.worldDecorations.push(background, grid, title, hint);
     this.worldDecorations.forEach((object) => this.uiCamera.ignore(object));
+  }
+
+  drawImageMap() {
+    const key = `editor-${this.activeMapId}-background`;
+    if (!this.textures.exists(key)) return this.drawLuanxingPlaceholder();
+    const background = this.add.image(0, 0, key)
+      .setOrigin(0)
+      .setDisplaySize(this.mapConfig.worldWidth, this.mapConfig.worldHeight)
+      .setDepth(-20);
+    this.worldDecorations.push(background);
+    this.uiCamera.ignore(background);
   }
 
   showTile(x, y) {
@@ -228,7 +269,9 @@ export class MapEditorScene extends Phaser.Scene {
 
   selectCategory(category) {
     this.clearPendingTemplateSelection();
-    this.selectedCategory = category; this.selectedObjectId = null; this.templateListStart = 0; this.buildUi();
+    this.pendingRegion = null;
+    this.selectedCategory = category; this.selectedObjectId = null; this.selectedRegionId = null; this.templateListStart = 0;
+    this.renderRegions(); this.buildUi();
     if (["herb", "mineral", "trigger"].includes(category)) this.notice(`${this.categoryName()}模板入口已预留，等待对应内容编辑器。`, "#ffd08a");
   }
 
@@ -237,6 +280,7 @@ export class MapEditorScene extends Phaser.Scene {
     if (this.selectedCategory === "npc") return this.npcs;
     if (this.selectedCategory === "building") return this.buildings;
     if (this.selectedCategory === "portal") return [{ id: "portal-default", name: "传送点" }];
+    if (this.selectedCategory === "region") return REGION_TEMPLATES;
     return [];
   }
 
@@ -269,6 +313,9 @@ export class MapEditorScene extends Phaser.Scene {
       // 模板只进入一次性放置状态；再次点击高亮卡片可以主动取消。
       this.selectedTemplateIds[this.selectedCategory] = active ? null : template.id;
       this.selectedObjectId = null;
+      this.selectedRegionId = null;
+      this.pendingRegion = null;
+      this.renderRegions();
       this.buildUi();
     });
   }
@@ -278,6 +325,7 @@ export class MapEditorScene extends Phaser.Scene {
     if (this.selectedCategory === "npc") return `${template.profile?.realm || "未知境界"} · ${template.profile?.identity || "NPC"}`;
     if (this.selectedCategory === "building") return `${template.type || "建筑"} · ${template.display?.width || 256}×${template.display?.height || 256}`;
     if (this.selectedCategory === "portal") return "地图传送点";
+    if (this.selectedCategory === "region") return template.type === "walkable" ? "绿色 · 允许角色和怪物通行" : "红色 · 禁止角色和怪物进入";
     return this.categoryName();
   }
 
@@ -335,6 +383,28 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   buildStats() {
+    if (this.selectedCategory === "region") {
+      const walkableCount = this.mapRegions.filter((region) => region.type === "walkable").length;
+      const blockedCount = this.mapRegions.filter((region) => region.type === "blocked").length;
+      this.text(14, 704, `可行走区 ${walkableCount}｜阻挡区 ${blockedCount}`, 13, "#aaa194");
+      const selected = this.mapRegions.find((region) => region.id === this.selectedRegionId);
+      const template = REGION_TEMPLATES.find((item) => item.id === this.selectedTemplateIds.region);
+      const status = this.pendingRegion
+        ? `绘制中：${MAP_REGION_TYPES[this.pendingRegion.type].name} · ${this.pendingRegion.points.length} 个点`
+        : selected
+          ? `已选：${selected.name} · ${selected.points.length} 个点`
+          : template
+            ? `待绘制：${template.name}（逐点点击地图）`
+            : "请选择区域类型，或点击已有区域进行选择";
+      this.text(14, 728, status, 13, this.pendingRegion || selected || template ? "#f3cf74" : "#d7a777", { wordWrap: { width: 320 } });
+      if (this.pendingRegion) {
+        this.button(14, 748, 154, 30, "撤销上一个点", () => this.undoPendingRegionPoint(), { fill: 0x30383b, size: 13 });
+        this.button(180, 748, 154, 30, "完成并闭合", () => this.completePendingRegion(), { fill: 0x365d39, size: 13 });
+      } else {
+        this.text(14, 758, "至少绘制 3 个点；点击起点也可闭合", 12, "#8f877d");
+      }
+      return;
+    }
     const counts = Object.keys(MAP_OBJECT_TYPES).map((type) => `${MAP_OBJECT_TYPES[type].name}${this.mapObjects.filter((item) => item.type === type).length}`);
     this.text(14, 704, counts.join("｜"), 12, "#aaa194", { wordWrap: { width: 320 } });
     const selected = this.mapObjects.find((object) => object.id === this.selectedObjectId);
@@ -374,12 +444,15 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   pushHistory() {
-    this.pushHistorySnapshot(this.mapObjects);
+    this.pushHistorySnapshot({ objects: this.mapObjects, regions: this.mapRegions });
   }
 
   pushHistorySnapshot(snapshot) {
     const history = this.historyByMap.get(this.activeMapId) || [];
-    history.push(this.clone(snapshot)); if (history.length > 40) history.shift();
+    const state = Array.isArray(snapshot)
+      ? { objects: snapshot, regions: this.mapRegions }
+      : { objects: snapshot.objects || [], regions: snapshot.regions || [] };
+    history.push(this.clone(state)); if (history.length > 40) history.shift();
     this.historyByMap.set(this.activeMapId, history); this.redoByMap.set(this.activeMapId, []);
   }
 
@@ -387,16 +460,24 @@ export class MapEditorScene extends Phaser.Scene {
     const history = this.historyByMap.get(this.activeMapId) || [];
     if (!history.length) return this.notice("没有可撤销的操作。", "#d7c8a8");
     const redo = this.redoByMap.get(this.activeMapId) || [];
-    redo.push(this.clone(this.mapObjects)); this.redoByMap.set(this.activeMapId, redo);
-    this.mapObjects = history.pop(); this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
+    redo.push(this.clone({ objects: this.mapObjects, regions: this.mapRegions })); this.redoByMap.set(this.activeMapId, redo);
+    const previous = history.pop();
+    this.mapObjects = previous.objects || [];
+    this.mapRegions = previous.regions || [];
+    this.selectedObjectId = null; this.selectedRegionId = null; this.pendingRegion = null;
+    this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
   }
 
   redo() {
     const redo = this.redoByMap.get(this.activeMapId) || [];
     if (!redo.length) return this.notice("没有可重做的操作。", "#d7c8a8");
     const history = this.historyByMap.get(this.activeMapId) || [];
-    history.push(this.clone(this.mapObjects)); this.historyByMap.set(this.activeMapId, history);
-    this.mapObjects = redo.pop(); this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
+    history.push(this.clone({ objects: this.mapObjects, regions: this.mapRegions })); this.historyByMap.set(this.activeMapId, history);
+    const next = redo.pop();
+    this.mapObjects = next.objects || [];
+    this.mapRegions = next.regions || [];
+    this.selectedObjectId = null; this.selectedRegionId = null; this.pendingRegion = null;
+    this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi();
   }
 
   pointerDown(pointer) {
@@ -409,6 +490,19 @@ export class MapEditorScene extends Phaser.Scene {
     }
     if (pointer.x > 1545 && pointer.y > 790) return;
     const world = this.mapCamera.getWorldPoint(pointer.x, pointer.y);
+    if (this.selectedCategory === "region") {
+      const drawing = this.pendingRegion || this.selectedTemplateIds.region;
+      if (drawing) {
+        this.addPendingRegionPoint(world.x, world.y);
+        return;
+      }
+      const region = this.regionAt(world.x, world.y);
+      this.selectedRegionId = region?.id || null;
+      this.selectedObjectId = null;
+      this.renderRegions(); this.buildUi();
+      if (!region) this.notice("请选择“可行走区域”或“阻挡区域”后开始绘制。", "#ffd08a");
+      return;
+    }
     const objectIndex = this.objectAt(world.x, world.y);
     if (objectIndex >= 0) {
       const object = this.mapObjects[objectIndex];
@@ -427,6 +521,7 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   mapClick(x, y) {
+    if (this.selectedCategory === "region") return this.addPendingRegionPoint(x, y);
     if (["herb", "mineral", "trigger"].includes(this.selectedCategory)) return;
     const type = this.selectedCategory;
     if (!MAP_OBJECT_TYPES[type]) return;
@@ -456,6 +551,57 @@ export class MapEditorScene extends Phaser.Scene {
     this.notice(`已放置「${object.name}」，并自动退出放置模式。`, "#dff0c7");
   }
 
+  addPendingRegionPoint(x, y) {
+    const template = REGION_TEMPLATES.find((item) => item.id === this.selectedTemplateIds.region);
+    if (!this.pendingRegion && !template) return this.notice("请先选择可行走区域或阻挡区域。", "#ffd08a");
+    if (!this.pendingRegion) this.pendingRegion = { type: template.type, points: [] };
+    const nextPoint = {
+      x: Math.round(Phaser.Math.Clamp(x, 0, this.mapConfig.worldWidth)),
+      y: Math.round(Phaser.Math.Clamp(y, 0, this.mapConfig.worldHeight)),
+    };
+    const firstPoint = this.pendingRegion.points[0];
+    const closeDistance = 16 / this.mapCamera.zoom;
+    if (firstPoint && this.pendingRegion.points.length >= 3
+      && Phaser.Math.Distance.Between(nextPoint.x, nextPoint.y, firstPoint.x, firstPoint.y) <= closeDistance) {
+      this.completePendingRegion();
+      return;
+    }
+    if (this.pendingRegion.points.length >= 128) return this.notice("单个区域最多 128 个点，请先完成当前区域。", "#ffd08a");
+    this.pendingRegion.points.push(nextPoint);
+    this.renderRegions(); this.buildUi();
+  }
+
+  undoPendingRegionPoint() {
+    if (!this.pendingRegion?.points.length) return;
+    this.pendingRegion.points.pop();
+    if (!this.pendingRegion.points.length) this.pendingRegion = null;
+    this.renderRegions(); this.buildUi();
+  }
+
+  completePendingRegion() {
+    if (!this.pendingRegion || this.pendingRegion.points.length < 3) {
+      return this.notice("至少需要 3 个点才能闭合区域。", "#ffd08a");
+    }
+    this.pushHistory();
+    const sameTypeCount = this.mapRegions.filter((region) => region.type === this.pendingRegion.type).length;
+    const region = createMapRegion(
+      this.pendingRegion.type,
+      this.pendingRegion.points,
+      `${MAP_REGION_TYPES[this.pendingRegion.type].name} ${sameTypeCount + 1}`,
+    );
+    this.mapRegions.push(region);
+    this.mapRegionDrafts.set(this.activeMapId, this.clone(this.mapRegions));
+    this.pendingRegion = null;
+    this.selectedRegionId = region.id;
+    this.clearPendingTemplateSelection();
+    this.renderRegions(); this.buildUi();
+    this.notice(`已完成「${region.name}」，点击“保存到游戏”后生效。`, "#dff0c7");
+  }
+
+  regionAt(x, y) {
+    return [...this.mapRegions].reverse().find((region) => isPointInMapRegion({ x, y }, region)) || null;
+  }
+
   objectAt(x, y) {
     // 命中顺序必须与实际显示层级一致：NPC 显示在建筑上方时，点击重叠区域也应先选中 NPC。
     // 深度相同时仍优先选择后放置的对象，保持原有编辑习惯。
@@ -479,7 +625,31 @@ export class MapEditorScene extends Phaser.Scene {
 
   renderMarkers() {
     for (const marker of this.markers.values()) marker.destroy(); this.markers.clear();
+    this.renderRegions();
     this.mapObjects.forEach((object) => this.renderMarker(object));
+  }
+
+  renderRegions() {
+    this.regionOverlay?.destroy();
+    const graphics = this.add.graphics().setDepth(5);
+    const draw = (region, selected = false, closed = true) => {
+      const definition = MAP_REGION_TYPES[region.type] || MAP_REGION_TYPES.blocked;
+      const points = region.points.map((item) => new Phaser.Geom.Point(item.x, item.y));
+      if (closed && points.length >= 3) {
+        graphics.fillStyle(definition.color, region.type === "walkable" ? 0.13 : 0.19);
+        graphics.fillPoints(points, true);
+      }
+      graphics.lineStyle(selected ? 5 : 3, definition.color, selected ? 1 : 0.82);
+      if (points.length >= 2) graphics.strokePoints(points, closed, closed);
+      points.forEach((item, index) => {
+        graphics.fillStyle(index === 0 ? 0xffd45e : definition.color, selected ? 1 : 0.9);
+        graphics.fillCircle(item.x, item.y, selected ? 7 : 5);
+      });
+    };
+    this.mapRegions.forEach((region) => draw(region, region.id === this.selectedRegionId, true));
+    if (this.pendingRegion) draw(this.pendingRegion, true, false);
+    this.regionOverlay = graphics;
+    this.uiCamera?.ignore(graphics);
   }
 
   renderMarker(object) {
@@ -541,6 +711,17 @@ export class MapEditorScene extends Phaser.Scene {
   }
 
   deleteSelected() {
+    if (this.selectedRegionId) {
+      const regionIndex = this.mapRegions.findIndex((region) => region.id === this.selectedRegionId);
+      if (regionIndex < 0) return;
+      this.pushHistory();
+      const [removed] = this.mapRegions.splice(regionIndex, 1);
+      this.selectedRegionId = null;
+      this.mapRegionDrafts.set(this.activeMapId, this.clone(this.mapRegions));
+      this.renderRegions(); this.buildUi();
+      this.notice(`已删除「${removed.name}」，保存后生效。`, "#dff0c7");
+      return;
+    }
     const index = this.mapObjects.findIndex((object) => object.id === this.selectedObjectId);
     if (index < 0) return this.notice("请先点击地图中的对象。", "#ffd08a");
     this.pushHistory(); this.mapObjects.splice(index, 1); this.selectedObjectId = null; this.renderMarkers(); this.buildUi();
@@ -570,16 +751,30 @@ export class MapEditorScene extends Phaser.Scene {
     this.notice(`「${selected.name}」已恢复为 100%，保存后在游戏中生效。`, "#dff0c7");
   }
 
-  cancelSelection() { this.selectedObjectId = null; this.clearPendingTemplateSelection(); this.renderMarkers(); this.buildUi(); }
+  cancelSelection() {
+    this.selectedObjectId = null;
+    this.selectedRegionId = null;
+    this.pendingRegion = null;
+    this.clearPendingTemplateSelection();
+    this.renderMarkers(); this.buildUi();
+  }
 
   save() {
     this.mapDrafts.set(this.activeMapId, this.clone(this.mapObjects));
-    if (saveMapObjects(this.activeMapId, this.mapObjects)) this.notice(`已保存「${this.mapConfig.name}」的 ${this.mapObjects.length} 个对象。`, "#d9f2c9");
+    this.mapRegionDrafts.set(this.activeMapId, this.clone(this.mapRegions));
+    if (saveMapContentBundle(this.activeMapId, this.mapObjects, this.mapRegions)) {
+      this.notice(`已保存「${this.mapConfig.name}」：${this.mapObjects.length} 个对象、${this.mapRegions.length} 个区域。`, "#d9f2c9");
+    }
     else this.notice("保存失败：浏览器本地空间不足。", "#ff9c8b");
   }
 
   exportConfig() {
-    const json = JSON.stringify({ mapId: this.activeMapId, mapName: this.mapConfig.name, objects: this.mapObjects }, null, 2);
+    const json = JSON.stringify({
+      mapId: this.activeMapId,
+      mapName: this.mapConfig.name,
+      objects: this.mapObjects,
+      regions: this.mapRegions,
+    }, null, 2);
     const url = URL.createObjectURL(new Blob([json], { type: "application/json;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `${this.mapConfig.name}-地图配置.json`; link.click();
     URL.revokeObjectURL(url); this.notice("地图配置已导出。", "#d9f2c9");

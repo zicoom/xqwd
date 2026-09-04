@@ -7,6 +7,7 @@ const RESUMABLE_SCENES = new Set([
   SceneKeys.SLOT_SELECT,
   SceneKeys.CREATE,
   SceneKeys.VILLAGE,
+  SceneKeys.MONSTER_CAVE,
   SceneKeys.RESULT,
 ]);
 
@@ -29,6 +30,10 @@ function normalizeSaveSlot(value) {
 
 function normalizeCreationSlot(value) {
   return Number.isInteger(value) && value >= 0 && value < 5 ? value : null;
+}
+
+function normalizeBattleReturnScene(value) {
+  return value === SceneKeys.MONSTER_CAVE ? SceneKeys.MONSTER_CAVE : SceneKeys.VILLAGE;
 }
 
 function readStoredRoute(storage) {
@@ -54,7 +59,7 @@ export function rememberSceneRoute({
 } = {}, storage = getDefaultStorage()) {
   if (!storage?.setItem || !RESUMABLE_SCENES.has(sceneKey)) return false;
   const normalizedSaveSlot = normalizeSaveSlot(saveSlot);
-  if ([SceneKeys.VILLAGE, SceneKeys.RESULT].includes(sceneKey) && normalizedSaveSlot === null) return false;
+  if ([SceneKeys.VILLAGE, SceneKeys.MONSTER_CAVE, SceneKeys.RESULT].includes(sceneKey) && normalizedSaveSlot === null) return false;
   const route = {
     version: CURRENT_VERSION,
     kind: "scene",
@@ -126,6 +131,10 @@ export function rememberBattleRoute({
   mapId = "",
   mapMonsterId = "",
   monsterTemplateId = "",
+  returnSceneKey = SceneKeys.VILLAGE,
+  dungeonId = "",
+  dungeonRunNumber = 0,
+  dungeonSpawnId = "",
 } = {}, storage = getDefaultStorage()) {
   if (!storage?.setItem) return false;
   const route = {
@@ -137,6 +146,10 @@ export function rememberBattleRoute({
     mapId: normalizeStableId(mapId),
     mapMonsterId: normalizeStableId(mapMonsterId),
     monsterTemplateId: normalizeStableId(monsterTemplateId),
+    returnSceneKey: normalizeBattleReturnScene(returnSceneKey),
+    dungeonId: normalizeStableId(dungeonId),
+    dungeonRunNumber: Math.max(0, Math.floor(Number(dungeonRunNumber) || 0)),
+    dungeonSpawnId: normalizeStableId(dungeonSpawnId),
   };
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(route));
@@ -190,6 +203,10 @@ export function getBattleResumeRoute(saveSlot = null, storage = getDefaultStorag
       mapId: normalizeStableId(route.mapId),
       mapMonsterId: normalizeStableId(route.mapMonsterId),
       monsterTemplateId: normalizeStableId(route.monsterTemplateId),
+      returnSceneKey: normalizeBattleReturnScene(route.returnSceneKey),
+      dungeonId: normalizeStableId(route.dungeonId),
+      dungeonRunNumber: Math.max(0, Math.floor(Number(route.dungeonRunNumber) || 0)),
+      dungeonSpawnId: normalizeStableId(route.dungeonSpawnId),
     };
   } catch {
     return null;

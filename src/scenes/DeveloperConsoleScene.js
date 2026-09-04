@@ -1,6 +1,7 @@
 import { SceneKeys } from "../core/SceneKeys.js";
 import { rememberEditorRoute } from "../core/EditorRoute.js";
 import { configureFullHdScene } from "../core/DisplayConfig.js";
+import { rememberSceneRoute } from "../core/SceneResumeState.js";
 import { addText, playUiClickSound } from "../utils/UiHelpers.js";
 
 const TOOL_CARDS = Object.freeze([
@@ -165,11 +166,17 @@ export class DeveloperConsoleScene extends Phaser.Scene {
     hitArea.on("pointerout", () => button.setAlpha(1));
     hitArea.on("pointerdown", () => {
       playUiClickSound(this);
-      this.scene.start(SceneKeys.COVER);
+      this.returnToCover();
     });
     label.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
       playUiClickSound(this);
-      this.scene.start(SceneKeys.COVER);
+      this.returnToCover();
     });
+  }
+
+  /** 编辑器可独立刷新，返回时必须显式覆盖旧的封面子界面恢复记录。 */
+  returnToCover() {
+    rememberSceneRoute({ sceneKey: SceneKeys.COVER });
+    this.scene.start(SceneKeys.COVER, { interfaceId: "" });
   }
 }

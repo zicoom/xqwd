@@ -6,6 +6,7 @@ const COVER_PATH = "./public/assets/images/covers/xuanqiong-wendao-cover-2048.jp
 const TITLE_FONT = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
 const UI_FONT = '"SJ yuantijian-C-Regular", "Microsoft YaHei", sans-serif';
 const SHARP_UI_FONT = '"Microsoft YaHei", "Noto Sans SC", sans-serif';
+const AVATAR_IMAGE_OFFSET_Y = 15;
 
 export const CHARACTER_ARCHIVE_ASSETS = Object.freeze({
   cover: "xuanqiong-wendao-cover",
@@ -150,7 +151,11 @@ export class CharacterArchiveView {
   createOccupiedSlot(x, index, slot, { onEnter, onDelete }) {
     const player = slot.player;
     this.addImage(x, LAYOUT.avatarY, CHARACTER_ARCHIVE_ASSETS.avatarFrame, 204, 196);
-    this.root.add(this.scene.add.image(x, LAYOUT.avatarY + 2, this.createAvatarTexture(player, index)).setDisplaySize(148, 148));
+    this.root.add(
+      this.scene.add
+        .image(x, LAYOUT.avatarY + AVATAR_IMAGE_OFFSET_Y, this.createAvatarTexture(player, index))
+        .setDisplaySize(148, 148),
+    );
 
     addCenteredText(this.scene, this.root, x, 565, player.name || "无名散修", 29, "#f6dfaa", {
       fontFamily: TITLE_FONT,

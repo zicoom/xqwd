@@ -44,6 +44,7 @@ assert.deepEqual(migrated.data.player.combatShortcuts[1], { kind: "spell", id: "
 assert.deepEqual(migrated.data.world.defeatedMonsterIds, []);
 assert.deepEqual(migrated.data.world.completedQuestIds, []);
 assert.deepEqual(migrated.data.world.sectProgress, {});
+assert.deepEqual(migrated.data.world.dungeonRuns, {});
 assert.deepEqual(migrated.data.world.merchantStock, { soldOut: 0, available: 9, invalid: 0 });
 assert.equal(JSON.stringify(legacy), snapshot, "迁移不能修改读入的原始存档");
 

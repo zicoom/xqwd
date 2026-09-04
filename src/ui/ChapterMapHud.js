@@ -2,6 +2,25 @@ import { QINGYUN_INVESTIGATION_ID } from "../domain/quests/ChapterQuestService.j
 import { addButton, addText, playUiClickSound } from "../utils/UiHelpers.js";
 import { PlayerTopToolbar } from "./PlayerTopToolbar.js";
 
+const CHAPTER_MAP_HUD_PATH = "./public/assets/images/pixso/chapter-map/scene-hud";
+
+export const CHAPTER_MAP_HUD_ASSETS = Object.freeze({
+  nearbyPanel: "chapter-map-hud-nearby-panel",
+  calendarPanel: "chapter-map-hud-calendar-panel",
+  questPanel: "chapter-map-hud-quest-panel",
+  minimapFrame: "chapter-map-hud-minimap-frame",
+  minimapCaption: "chapter-map-hud-minimap-caption",
+});
+
+/** 预加载用户提供的第一章地图固定界面素材。 */
+export function preloadChapterMapHudAssets(scene) {
+  scene.load.image(CHAPTER_MAP_HUD_ASSETS.nearbyPanel, `${CHAPTER_MAP_HUD_PATH}/nearby-cultivator-panel.png`);
+  scene.load.image(CHAPTER_MAP_HUD_ASSETS.calendarPanel, `${CHAPTER_MAP_HUD_PATH}/calendar-panel.png`);
+  scene.load.image(CHAPTER_MAP_HUD_ASSETS.questPanel, `${CHAPTER_MAP_HUD_PATH}/quest-panel.png`);
+  scene.load.image(CHAPTER_MAP_HUD_ASSETS.minimapFrame, `${CHAPTER_MAP_HUD_PATH}/minimap-frame.png`);
+  scene.load.image(CHAPTER_MAP_HUD_ASSETS.minimapCaption, `${CHAPTER_MAP_HUD_PATH}/minimap-caption.png`);
+}
+
 /**
  * 第一章地图专用 HUD（界面层）。
  *
@@ -35,9 +54,6 @@ export class ChapterMapHud {
       scene.worldCamera?.ignore(display);
       return display;
     };
-    const panelColor = 0x171d16;
-    const panelStroke = 0x765b43;
-
     // 大地图与门派内部共用同一套角色状态栏和功能图标，避免两个场景各自维护后逐渐走样。
     this.playerTopToolbar = new PlayerTopToolbar(scene, {
       actions: {
@@ -50,91 +66,68 @@ export class ChapterMapHud {
       },
     }).create();
 
-    // ── 右侧：水墨卷轴信息栏（日期、任务、小地图） ────────────────────
-    // 这一列不再使用普通的黑色圆角卡片，而是统一做成“墨色宣纸卷轴”：
-    // 外层是深墨绿，内层有半透明宣纸留白，四角用金线收口；这样既有水墨感，
-    // 又不会在明亮的大地图上显得像现代软件的黑色窗口。
-    const drawInkScrollPanel = (centerX, centerY, width, height, radius = 13) => {
-      const panel = fixed(scene.add.graphics());
-      const left = centerX - width / 2;
-      const top = centerY - height / 2;
-      const right = centerX + width / 2;
-      const bottom = centerY + height / 2;
-      // 第一层是深墨色外壳，透明度稍低，让地图仍能从纸背隐约透出。
-      panel.fillStyle(0x102019, 0.91);
-      panel.fillRoundedRect(left, top, width, height, radius);
-      panel.lineStyle(2, 0xa98042, 0.94);
-      panel.strokeRoundedRect(left, top, width, height, radius);
-      // 内层偏灰绿，模拟久经烟火的宣纸，而不是一块纯色的塑料面板。
-      panel.fillStyle(0x304037, 0.32);
-      panel.fillRoundedRect(left + 7, top + 7, width - 14, height - 14, Math.max(5, radius - 5));
-      panel.lineStyle(1, 0x6b7d68, 0.42);
-      panel.strokeRoundedRect(left + 7, top + 7, width - 14, height - 14, Math.max(5, radius - 5));
-      // 两团非常淡的墨晕打破平面感；颜色透明，不会妨碍任何文字阅读。
-      panel.fillStyle(0x06120d, 0.14);
-      panel.fillEllipse(left + width * 0.22, top + height * 0.28, width * 0.46, height * 0.44);
-      panel.fillEllipse(right - width * 0.16, bottom - height * 0.22, width * 0.38, height * 0.38);
-      // 不绘制四角回纹装饰：右侧信息栏保持干净留白，避免抢走日期、任务与小地图的注意力。
-      return panel;
-    };
-    // 右侧文字使用清晰、无粗黑描边的字体；水墨感交给面板和颜色，保证长期阅读舒适。
-    const rightTextStyle = { fontFamily: "Microsoft YaHei, SimHei, Noto Sans SC, sans-serif", strokeThickness: 0 };
+    // ── 右侧：用户提供的墨金卷轴信息栏（日期、任务、小地图） ──────────
+    // 六张素材均按原始像素摆放；文字、探索迷雾和交互仍是独立对象，不能把截图当作界面。
+    const titleFont = '"Alimama DongFangDaKai", "Microsoft YaHei", sans-serif';
+    const bodyFont = '"Microsoft YaHei", "Noto Sans SC", sans-serif';
+    const rightTextStyle = { fontFamily: bodyFont, strokeThickness: 0 };
+    const rightTitleStyle = { fontFamily: titleFont, strokeThickness: 0 };
 
-    // 日期是最短的一张题签：日期在上、寿命在下，均按面板中心严格居中。
-    drawInkScrollPanel(1751, 280, 300, 112);
-    fixed(addText(scene, 1751, 252, "修仙历 1 年 1 月 2 日", 20, "#f4ead3", rightTextStyle)).setOrigin(0.5);
-    fixed(addText(scene, 1751, 292, "寿命 · 16 / 100 岁", 18, "#b9dbaf", rightTextStyle)).setOrigin(0.5);
+    // 图2中的五张 HUD 素材都按 PNG 原始尺寸一对一显示，不能再缩到 300px 宽。
+    fixed(scene.add.image(1540, 22, CHAPTER_MAP_HUD_ASSETS.calendarPanel).setOrigin(0).setDisplaySize(360, 204));
+    fixed(addText(scene, 1720, 72, "修仙历 1 年 1 月 2 日", 22, "#f4ead3", {
+      ...rightTextStyle,
+      stroke: "#17130e",
+      strokeThickness: 2,
+    })).setOrigin(0.5);
+    fixed(addText(scene, 1720, 109, "寿命: 16/100岁", 19, "#b9dbaf", {
+      ...rightTextStyle,
+      stroke: "#17130e",
+      strokeThickness: 2,
+    })).setOrigin(0.5);
 
-    // 任务采用较高的主卷轴：标题区有金色题签和一条淡墨分隔线，右侧“日志”保留可点击功能。
-    drawInkScrollPanel(1751, 449, 300, 188);
-    fixed(addText(scene, 1613, 382, "当前任务", 19, "#f1c95a", { ...rightTextStyle, fontStyle: "bold" })).setOrigin(0, 0.5);
-    this.taskLogButton = fixed(addText(scene, 1880, 382, "任务日志", 15, "#c7c6af", rightTextStyle))
+    fixed(scene.add.image(1531, 437, CHAPTER_MAP_HUD_ASSETS.questPanel).setOrigin(0).setDisplaySize(378, 205));
+    fixed(addText(scene, 1614, 481, "当前任务", 20, "#f1c95a", rightTitleStyle)).setOrigin(0, 0.5);
+    this.taskLogButton = fixed(addText(scene, 1850, 481, "日志", 20, "#e9dfbf", rightTitleStyle))
       .setOrigin(1, 0.5)
       .setInteractive({ useHandCursor: true });
     this.taskLogButton.on("pointerdown", () => this.openTaskLog());
     this.taskLogButton.on("pointerover", () => this.taskLogButton.setColor("#f8cf14"));
     this.taskLogButton.on("pointerout", () => this.taskLogButton.setColor("#a0a196"));
-    fixed(scene.add.rectangle(1751, 414, 254, 1, 0x9c824e, 0.58));
-    this.questText = fixed(addText(scene, 1613, 453, "", 16, "#f0e6d3", { ...rightTextStyle, wordWrap: { width: 258 }, lineSpacing: 8 })).setOrigin(0, 0.5);
+    this.questText = fixed(addText(scene, 1720, 558, "", 18, "#f0e6d3", {
+      ...rightTextStyle,
+      align: "left",
+      wordWrap: { width: 250, useAdvancedWrap: true },
+      lineSpacing: 8,
+    })).setOrigin(0.5);
     this.updateQuestPanel();
-    // 小地图被设计成“观山镜”：外层卷轴框、内层金圈、中央墨色圆形探索图。
-    drawInkScrollPanel(1751, 695, 300, 274);
-    const miniMapRing = fixed(scene.add.graphics());
-    miniMapRing.fillStyle(0x060c09, 0.98);
-    miniMapRing.fillCircle(1751, 675, 105);
-    miniMapRing.lineStyle(3, 0xbf9851, 0.95);
-    miniMapRing.strokeCircle(1751, 675, 107);
-    miniMapRing.lineStyle(1, 0xefe0a7, 0.68);
-    miniMapRing.strokeCircle(1751, 675, 98);
+    // 观山镜外框最后覆盖在探索图之上，防止足迹圆点压住墨金边缘。
     this.createMiniMapFog();
-    fixed(addText(scene, 1751, 810, "观山镜 · 栖霞村", 18, "#f1ca5c", rightTextStyle))
+    fixed(scene.add.image(1548, 679, CHAPTER_MAP_HUD_ASSETS.minimapFrame).setOrigin(0).setDisplaySize(344, 297)).setDepth(905);
+    fixed(scene.add.image(1571, 943, CHAPTER_MAP_HUD_ASSETS.minimapCaption).setOrigin(0).setDisplaySize(302, 119)).setDepth(906);
+    fixed(addText(scene, 1722, 972, "小地图：栖霞村", 20, "#f1ca5c", rightTitleStyle))
       .setOrigin(0.5)
-      .setDepth(905);
+      .setDepth(907);
 
     // ── 左下：附近 NPC 信息 ──────────────────────────────────────────
-    this.nearbyHud = scene.add.container(33, 530).setScrollFactor(0).setDepth(900).setVisible(false);
-    this.nearbyHudBaseX = 33;
+    this.nearbyHud = scene.add.container(25, 437).setScrollFactor(0).setDepth(900).setVisible(false);
+    this.nearbyHudBaseX = 25;
     this.nearbyCardTargetVisible = false;
-    // 与右侧「当前任务」使用相同的圆角半径、深色底与棕色描边。
-    const nearbyPanel = scene.add.graphics();
-    nearbyPanel.fillStyle(panelColor, 0.9);
-    nearbyPanel.fillRoundedRect(0, 0, 290, 137, 8);
-    nearbyPanel.lineStyle(1.5, panelStroke, 1);
-    nearbyPanel.strokeRoundedRect(0, 0, 290, 137, 8);
-    const nearbyTitle = addText(scene, 20, 17, "附近修士", 18, "#f4d58c", { strokeThickness: 3 });
+    const nearbyPanel = scene.add.image(0, 0, CHAPTER_MAP_HUD_ASSETS.nearbyPanel).setOrigin(0).setDisplaySize(334, 197);
+    const nearbyTitle = addText(scene, 62, 31, "附近修士", 18, "#f1c95a", { fontFamily: titleFont, strokeThickness: 2 });
     // NPC 头像与地图问号分开：即使没有地图立绘，玩家靠近时仍能知道是谁。
     // 效果图中的头像是带一点灰色底的圆角方框，而不是圆形小人图标。
     this.nearbyAvatarFrame = scene.add.graphics()
       .fillStyle(0x6d766c, 1)
-      .fillRoundedRect(19, 58, 60, 60, 8)
+      .fillRoundedRect(70, 89, 60, 60, 8)
       .setVisible(false);
-    this.nearbyAvatar = scene.add.image(49, 88, "player-idle-5dir", 0).setOrigin(0.5, 0.76).setScale(0.31).setVisible(false);
+    this.nearbyAvatar = scene.add.image(100, 119, "player-idle-5dir", 0).setOrigin(0.5, 0.76).setScale(0.31).setVisible(false);
     // 问号放在头像右上方，但避开「附近修士」标题。
-    this.nearbyQuestion = scene.add.image(70, 60, "npc-map-question-mark").setOrigin(0.5).setDisplaySize(29, 38).setVisible(false);
-    this.nearbyNameText = addText(scene, 92, 63, "暂未发现", 18, "#ffffff", { strokeThickness: 3 });
-    this.nearbyRealmText = addText(scene, 92, 90, "靠近 NPC 可交谈", 16, "#a8a79a", { strokeThickness: 3 });
+    this.nearbyQuestion = scene.add.image(125, 84, "npc-map-question-mark").setOrigin(0.5).setDisplaySize(29, 38).setVisible(false);
+    this.nearbyNameText = addText(scene, 149, 92, "暂未发现", 21, "#fff4dd", { fontFamily: bodyFont, strokeThickness: 2 });
+    this.nearbyRealmText = addText(scene, 149, 128, "练气初期", 17, "#d3c8b0", { fontFamily: bodyFont, strokeThickness: 2 });
     // 整张“附近修士”卡可以点击：NPC 在范围内时打开人物资料，而不是直接跳进对话。
-    this.nearbyHitArea = scene.add.rectangle(145, 68, 290, 137, 0xffffff, 0)
+    this.nearbyHitArea = scene.add.rectangle(167, 98.5, 334, 197, 0xffffff, 0)
       .setInteractive({ useHandCursor: true });
     this.nearbyHitArea.input.enabled = false;
     this.nearbyHitArea.on("pointerdown", () => {
@@ -153,10 +146,8 @@ export class ChapterMapHud {
   setNearby(object, canInteract = true) {
     this.nearbyObject = object || null;
     this.nearbyNameText.setText(object ? object.name : "暂未发现");
-    const isMerchant = Boolean(this.scene.isMerchantNpc?.(object));
-    this.nearbyRealmText.setText(object
-      ? (canInteract ? (object.type === "monster" ? "妖兽 · 可进入战斗" : isMerchant ? "商人 · 可购物" : "练气初期 · 可交谈") : `在附近 · 靠近后可${isMerchant ? "购物" : "交谈"}`)
-      : "靠近 NPC 可交谈");
+    const nearbyRealm = object?.npcTemplate?.realm || object?.realm || "练气初期";
+    this.nearbyRealmText.setText(object ? nearbyRealm : "练气初期");
     const isNpc = object?.type === "npc";
     this.setNearbyCardVisible(isNpc);
     if (this.nearbyHitArea?.input) this.nearbyHitArea.input.enabled = isNpc;
@@ -170,14 +161,14 @@ export class ChapterMapHud {
     // NPC 只维护立绘；附近修士头像从立绘上半部自动裁切。
     const avatarData = object.npcTemplate?.portraitData || object.npcTemplate?.avatarData || object.npcTemplate?.imageData || "";
     if (!avatarData) {
-      this.nearbyAvatar.setTexture("player-idle-5dir", 0).setCrop().setOrigin(0.5, 0.76).setPosition(49, 88).setScale(0.31);
+      this.nearbyAvatar.setTexture("player-idle-5dir", 0).setCrop().setOrigin(0.5, 0.76).setPosition(100, 119).setScale(0.31);
       return;
     }
     const textureKey = `nearby-npc-avatar-rounded-${object.npcTemplate?.id || object.id}`;
     const applyAvatar = () => {
       if (!this.nearbyAvatar?.active || this.nearbyNpcId !== object.id) return;
       this.nearbyAvatar.setTexture(textureKey).setCrop()
-        .setOrigin(0.5).setPosition(49, 88).setDisplaySize(60, 60);
+        .setOrigin(0.5).setPosition(100, 119).setDisplaySize(60, 60);
     };
     if (this.scene.textures.exists(textureKey)) applyAvatar();
     else {
@@ -270,8 +261,8 @@ export class ChapterMapHud {
       this.nearbyObject?.type === "npc"
       && this.nearbyHud.visible
       && this.nearbyHud.alpha > 0.9
-      && pointer.x >= 33 && pointer.x <= 323
-      && pointer.y >= 530 && pointer.y <= 667,
+      && pointer.x >= 25 && pointer.x <= 359
+      && pointer.y >= 437 && pointer.y <= 634,
     );
   }
 
@@ -283,26 +274,18 @@ export class ChapterMapHud {
     const scene = this.scene;
     // 小地图改为圆形“观山镜”。地图坐标仍按正方形换算，世界不会被横向或纵向拉伸；
     // 显示到圆镜外的足迹会被过滤，不再出现截图中不规则的绿色大块。
-    this.miniMap = { x: 1751, y: 675, radius: 96, mapSize: 192 };
+    this.miniMap = { x: 1720, y: 831, radius: 124, mapSize: 248 };
     // 深墨圆形底层表示未探索区域，外层金圈已在 create() 中绘制。
     this.miniMapFog = scene.add.graphics()
       .setScrollFactor(0)
       .setDepth(902);
     scene.worldCamera?.ignore(this.miniMapFog);
-    this.miniMapFog.fillStyle(0x0a1711, 1);
+    this.miniMapFog.fillStyle(0x000000, 1);
     this.miniMapFog.fillCircle(this.miniMap.x, this.miniMap.y, this.miniMap.radius);
-    // 画两道非常淡的山脊弧线，使未探索的“墨底”也像一面山水镜，而不是纯黑圆盘。
-    this.miniMapFog.lineStyle(1, 0x62745d, 0.28);
-    this.miniMapFog.beginPath();
-    this.miniMapFog.moveTo(this.miniMap.x - 82, this.miniMap.y + 28);
-    this.miniMapFog.lineTo(this.miniMap.x - 32, this.miniMap.y - 14);
-    this.miniMapFog.lineTo(this.miniMap.x + 8, this.miniMap.y + 17);
-    this.miniMapFog.lineTo(this.miniMap.x + 64, this.miniMap.y - 38);
-    this.miniMapFog.strokePath();
     // 每个足迹是两个原生圆形对象，确保所有设备上都能稳定显示探索亮区。
     this.miniMapExploredDots = [];
     // 蓝点表示主角当前位置；它始终位于迷雾上方，方便辨认自己所在位置。
-    this.miniMapPlayerMarker = scene.add.circle(this.miniMap.x, this.miniMap.y, 5, 0x238de0, 1)
+    this.miniMapPlayerMarker = scene.add.circle(this.miniMap.x, this.miniMap.y, 8, 0x238de0, 1)
       .setStrokeStyle(1, 0xd7f5ff, 0.95)
       .setScrollFactor(0)
       .setDepth(904);
@@ -348,15 +331,16 @@ export class ChapterMapHud {
 
   /** 新增单个已探索足迹，并在创建同一帧锁定为 UI 专用对象。 */
   addMiniMapExploredDot(point, worldSize) {
-    const revealRadius = 17;
+    const revealRadius = 23;
     const { x, y } = this.toMiniMapPosition(point.x, point.y, worldSize);
     const distanceToCenter = Phaser.Math.Distance.Between(x, y, this.miniMap.x, this.miniMap.y);
     // 足迹圆边缘也不能越过金圈；留出半径余量后不会遮到外层水墨卷轴。
-    if (distanceToCenter > this.miniMap.radius - revealRadius) return;
+    // 图2允许探索亮区贴近镜框；外框位于更高层，会自然遮住圆点越过内圈的边缘。
+    if (distanceToCenter > this.miniMap.radius - revealRadius * 0.25) return;
     // 外圈是淡墨青绿，内圈是浅青色，表现“已游历的山川”而非原先的大块荧光绿。
     const dots = [
-      this.scene.add.circle(x, y, revealRadius, 0x385e50, 0.88).setScrollFactor(0).setDepth(903),
-      this.scene.add.circle(x, y, revealRadius * 0.62, 0x8ab59a, 0.66).setScrollFactor(0).setDepth(903),
+      this.scene.add.circle(x, y, revealRadius, 0xaab982, 0.94).setScrollFactor(0).setDepth(903),
+      this.scene.add.circle(x, y, revealRadius * 0.62, 0xc6cf9d, 0.76).setScrollFactor(0).setDepth(903),
     ];
     // 不能依赖 VillageScene 每 250ms 的兜底同步；这一帧就禁止世界镜头绘制。
     this.scene.worldCamera?.ignore(dots);
@@ -634,10 +618,11 @@ export class ChapterMapHud {
       ?.setText(text)
       .setColor(hasActiveQuest ? "#ffffff" : "#a8a79a")
       .setFontSize(hasActiveQuest ? "16px" : "18px")
-      .setWordWrapWidth(hasActiveQuest ? 262 : 0)
+      .setAlign(hasActiveQuest ? "left" : "center")
+      .setWordWrapWidth(hasActiveQuest ? 250 : 0, hasActiveQuest)
       .setOrigin(hasActiveQuest ? 0 : 0.5, 0.5)
-      // 新水墨任务卷轴的正文从分隔线下方开始；无任务时仍保持整齐的居中留白。
-      .setPosition(hasActiveQuest ? 1613 : 1751, hasActiveQuest ? 453 : 469);
+      // 图2中任务正文位于原尺寸卷轴的下半区；无任务时严格以卷轴中心对齐。
+      .setPosition(hasActiveQuest ? 1620 : 1720, 558);
   }
 
   /** 防止点击顶栏图标时，被地图误判成“鼠标自动寻路”。 */
@@ -654,7 +639,7 @@ export class ChapterMapHud {
     const overProfile = x >= 0 && x <= 465 && y >= 15 && y <= 155;
     const overToolbar = this.isPointerOverTopToolbar(pointer);
     // 右侧“观山镜”改为更高的圆形小地图后，HUD 的不可寻路范围同步延长到底部。
-    const overRightColumn = x >= 1595 && x <= 1910 && y >= 220 && y <= 845;
+    const overRightColumn = x >= 1530 && x <= 1920 && y >= 15 && y <= 1065;
     return overProfile || overToolbar || overRightColumn;
   }
 }

@@ -18,7 +18,11 @@
     "test:shop": "node scripts/smoke-shop-service.mjs",
     "test:building": "node scripts/smoke-building-template.mjs",
     "test:building-collision": "node scripts/smoke-building-collision-service.mjs",
+    "test:building-entrance": "node scripts/smoke-building-entrance-service.mjs",
     "test:map-exploration": "node scripts/smoke-map-exploration-service.mjs",
+    "test:map-navigation": "node scripts/smoke-map-navigation-service.mjs",
+    "test:dungeon-ai": "node scripts/smoke-dungeon-monster-ai-service.mjs",
+    "test:dungeon-run": "node scripts/smoke-dungeon-run-service.mjs",
     "test:sect": "node scripts/smoke-sect-access-service.mjs",
     "test:scene-resume": "node scripts/smoke-scene-resume-state.mjs",
     "test:alchemy": "node scripts/smoke-alchemy-service.mjs",
@@ -30,9 +34,10 @@
     "recover:editor-backup": "node scripts/recover-editor-backup.cjs",
     "test:map-content": "node scripts/smoke-map-content.mjs",
     "test:monster-appearance": "node scripts/smoke-monster-appearance.mjs",
+    "test:battle-lifecycle": "node scripts/smoke-battle-scene-lifecycle.mjs",
     "test:combat": "node scripts/smoke-combat-engine.mjs",
     "test:reward": "node scripts/smoke-battle-reward-service.mjs",
     "test:save": "node scripts/smoke-save-migrations.mjs",
-    "test": "npm run check:architecture && npm run test:quest && npm run test:npc-interaction && npm run test:npc-dialogue && npm run test:transfer && npm run test:artifact && npm run test:shortcut && npm run test:archive && npm run test:profile && npm run test:character-create && npm run test:cultivation-progress && npm run test:cultivation-breakthrough && npm run test:shop && npm run test:building && npm run test:building-collision && npm run test:map-exploration && npm run test:sect && npm run test:scene-resume && npm run test:alchemy && npm run test:alchemy-minigame && npm run test:retreat && npm run test:cultivation-retreat && npm run test:retreat-minigame && npm run test:editor-files && npm run test:map-content && npm run test:monster-appearance && npm run test:combat && npm run test:reward && npm run test:save"
+    "test": "npm run check:architecture && npm run test:quest && npm run test:npc-interaction && npm run test:npc-dialogue && npm run test:transfer && npm run test:artifact && npm run test:shortcut && npm run test:archive && npm run test:profile && npm run test:character-create && npm run test:cultivation-progress && npm run test:cultivation-breakthrough && npm run test:shop && npm run test:building && npm run test:building-collision && npm run test:building-entrance && npm run test:map-exploration && npm run test:map-navigation && npm run test:dungeon-ai && npm run test:dungeon-run && npm run test:sect && npm run test:scene-resume && npm run test:alchemy && npm run test:alchemy-minigame && npm run test:retreat && npm run test:cultivation-retreat && npm run test:retreat-minigame && npm run test:editor-files && npm run test:map-content && npm run test:monster-appearance && npm run test:battle-lifecycle && npm run test:combat && npm run test:reward && npm run test:save"
   }
 }

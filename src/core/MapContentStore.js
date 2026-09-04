@@ -5,6 +5,43 @@
  */
 import { getLegacyEditorData, loadEditorData, saveEditorData } from "./EditorFileRepository.js";
 const MAP_CONTENT_SAVE_KEY = "xuanqiong-wendao-map-content-v1";
+const MAP_REGIONS_PROPERTY = "__mapRegions";
+
+export const MAP_REGION_TYPES = Object.freeze({
+  walkable: Object.freeze({ name: "可行走区", color: 0x55d68a }),
+  blocked: Object.freeze({ name: "阻挡区", color: 0xe45f5f }),
+});
+
+function normalizeRegionPoint(point) {
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  return Number.isFinite(x) && Number.isFinite(y)
+    ? { x: Math.round(x), y: Math.round(y) }
+    : null;
+}
+
+/** 地图区域使用世界坐标多边形；阻挡区优先级高于可行走区。 */
+export function normalizeMapRegion(region = {}) {
+  const type = MAP_REGION_TYPES[region.type] ? region.type : "blocked";
+  const points = Array.isArray(region.points)
+    ? region.points.slice(0, 128).map(normalizeRegionPoint).filter(Boolean)
+    : [];
+  return {
+    id: String(region.id || `region-${Date.now()}-${Math.floor(Math.random() * 10000)}`),
+    type,
+    name: String(region.name || MAP_REGION_TYPES[type].name).trim() || MAP_REGION_TYPES[type].name,
+    points,
+  };
+}
+
+export function createMapRegion(type, points, name = "") {
+  return normalizeMapRegion({
+    id: `region-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+    type,
+    name,
+    points,
+  });
+}
 
 /** 编辑器第一版允许放置的四类地图对象。 */
 export const MAP_OBJECT_TYPES = Object.freeze({
@@ -30,12 +67,43 @@ export function getMapObjects(mapId) {
   return [];
 }
 
+/** 读取地图编辑器绘制的可行走区与阻挡区。旧地图没有区域数据时返回空数组。 */
+export function getMapRegions(mapId) {
+  const result = loadEditorData("map-content");
+  if (result.ok) {
+    const regions = result.data?.[MAP_REGIONS_PROPERTY]?.[mapId];
+    return Array.isArray(regions) ? regions.map(normalizeMapRegion).filter((region) => region.points.length >= 3) : [];
+  }
+  const legacy = getLegacyEditorData(MAP_CONTENT_SAVE_KEY);
+  const regions = legacy?.[MAP_REGIONS_PROPERTY]?.[mapId];
+  return Array.isArray(regions) ? regions.map(normalizeMapRegion).filter((region) => region.points.length >= 3) : [];
+}
+
 /** 保存某张地图的完整对象列表。 */
 export function saveMapObjects(mapId, objects) {
   const current = loadEditorData("map-content");
   const allMaps = current.ok ? current.data : (getLegacyEditorData(MAP_CONTENT_SAVE_KEY) || {});
   const saved = saveEditorData("map-content", { ...allMaps, [mapId]: objects.map(normalizeMapObject) });
   if (!saved.ok) console.warn("地图内容保存失败：", saved.error);
+  return saved.ok;
+}
+
+/** 对象和区域一次写入同一份地图文件，避免只保存其中一半。 */
+export function saveMapContentBundle(mapId, objects, regions) {
+  const current = loadEditorData("map-content");
+  const allMaps = current.ok ? current.data : (getLegacyEditorData(MAP_CONTENT_SAVE_KEY) || {});
+  const allRegions = allMaps?.[MAP_REGIONS_PROPERTY] && typeof allMaps[MAP_REGIONS_PROPERTY] === "object"
+    ? allMaps[MAP_REGIONS_PROPERTY]
+    : {};
+  const saved = saveEditorData("map-content", {
+    ...allMaps,
+    [mapId]: objects.map(normalizeMapObject),
+    [MAP_REGIONS_PROPERTY]: {
+      ...allRegions,
+      [mapId]: regions.map(normalizeMapRegion).filter((region) => region.points.length >= 3),
+    },
+  });
+  if (!saved.ok) console.warn("地图对象与区域保存失败：", saved.error);
   return saved.ok;
 }
 

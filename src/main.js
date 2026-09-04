@@ -9,6 +9,7 @@ import { ItemEditorScene } from "./scenes/ItemEditorScene.js";
 import { BuildingEditorScene } from "./scenes/BuildingEditorScene.js";
 import { CharacterCreateScene } from "./scenes/CharacterCreateScene.js";
 import { VillageScene } from "./scenes/VillageScene.js";
+import { MonsterCaveScene } from "./scenes/MonsterCaveScene.js";
 import { SectScene } from "./scenes/SectScene.js";
 import { BattleScene } from "./scenes/BattleScene.js";
 import { ChapterResultScene } from "./scenes/ChapterResultScene.js";
@@ -50,5 +51,5 @@ window.__xuanqiongGame = new Phaser.Game({
   },
   // 封面是玩家最先看到的场景；之后由 BootScene 判断进入角色创建还是已保存的第一章。
   // BootScene 放在第一个，负责判断刷新后进入最近角色还是首次封面。
-  scene: [BootScene, CoverScene, SaveSlotScene, DeveloperConsoleScene, MapEditorScene, MonsterEditorScene, NpcEditorScene, ItemEditorScene, BuildingEditorScene, CharacterCreateScene, VillageScene, SectScene, BattleScene, ChapterResultScene],
+  scene: [BootScene, CoverScene, SaveSlotScene, DeveloperConsoleScene, MapEditorScene, MonsterEditorScene, NpcEditorScene, ItemEditorScene, BuildingEditorScene, CharacterCreateScene, VillageScene, MonsterCaveScene, SectScene, BattleScene, ChapterResultScene],
 });

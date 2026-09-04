@@ -28,6 +28,15 @@ assert.deepEqual(getSceneResumeRoute(undefined, storage), {
   newCharacter: false,
 });
 
+rememberSceneRoute({ sceneKey: SceneKeys.COVER }, storage);
+assert.deepEqual(getSceneResumeRoute(undefined, storage), {
+  sceneKey: SceneKeys.COVER,
+  saveSlot: null,
+  interfaceId: "",
+  slotIndex: null,
+  newCharacter: false,
+}, "离开封面设置后必须覆盖旧的 settings 子界面记录");
+
 rememberSceneRoute({ sceneKey: SceneKeys.SLOT_SELECT }, storage);
 assert.deepEqual(getSceneResumeRoute(undefined, storage), {
   sceneKey: SceneKeys.SLOT_SELECT,
@@ -92,6 +101,10 @@ assert.deepEqual(getBattleResumeRoute(1, storage), {
   mapId: "",
   mapMonsterId: "",
   monsterTemplateId: "",
+  returnSceneKey: SceneKeys.VILLAGE,
+  dungeonId: "",
+  dungeonRunNumber: 0,
+  dungeonSpawnId: "",
 });
 assert.equal(getBattleResumeRoute(2, storage), null, "其他角色档位不能复用当前战斗");
 assert.equal(getSectResumeRoute(1, storage), null, "战斗恢复记录不能被误认成门派页面");
@@ -109,6 +122,36 @@ assert.deepEqual(getBattleResumeRoute(1, storage), {
   mapId: "qingyun-mountain",
   mapMonsterId: "monster-123",
   monsterTemplateId: "monster:mist-spider",
+  returnSceneKey: SceneKeys.VILLAGE,
+  dungeonId: "",
+  dungeonRunNumber: 0,
+  dungeonSpawnId: "",
+});
+
+rememberSceneRoute({ sceneKey: SceneKeys.MONSTER_CAVE, saveSlot: 1 }, storage);
+assert.equal(getSceneResumeRoute(1, storage)?.sceneKey, SceneKeys.MONSTER_CAVE);
+
+rememberBattleRoute({
+  saveSlot: 1,
+  mapId: "monster-cave-1",
+  mapMonsterId: "cave-wolf-a",
+  monsterTemplateId: "monster-green-wood-wolf",
+  returnSceneKey: SceneKeys.MONSTER_CAVE,
+  dungeonId: "monster-cave-1",
+  dungeonRunNumber: 3,
+  dungeonSpawnId: "cave-wolf-a",
+}, storage);
+assert.deepEqual(getBattleResumeRoute(1, storage), {
+  resumeBattle: true,
+  testBattle: false,
+  adventureBattle: "",
+  mapId: "monster-cave-1",
+  mapMonsterId: "cave-wolf-a",
+  monsterTemplateId: "monster-green-wood-wolf",
+  returnSceneKey: SceneKeys.MONSTER_CAVE,
+  dungeonId: "monster-cave-1",
+  dungeonRunNumber: 3,
+  dungeonSpawnId: "cave-wolf-a",
 });
 
 rememberSectRoute({ sectId: "sect:tianjian", saveSlot: 1 }, storage);

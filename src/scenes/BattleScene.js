@@ -6,6 +6,7 @@ import { ItemCatalog } from "../domain/items/ItemCatalog.js";
 import { SpellService } from "../domain/spells/SpellService.js";
 import { CombatEngine, calculatePlayerInitiative } from "../domain/combat/CombatEngine.js";
 import { BattleRewardService } from "../domain/rewards/BattleRewardService.js";
+import { DungeonRunService } from "../domain/world/DungeonRunService.js";
 import { getMonsterAppearanceTextureKey, resolveMonsterAppearance } from "../core/MonsterAppearance.js";
 import { getMapObjects } from "../core/MapContentStore.js";
 import { getMonsterTemplate } from "../core/MonsterStore.js";
@@ -21,6 +22,7 @@ import {
 
 const CHAPTER_ELITE_REWARDS = ["灵石 × 12", "低阶回灵丹 × 1", "蚀月盟令牌残片 × 1"];
 const DEFAULT_MONSTER_REWARDS = ["灵石 × 3", "低阶材料 × 1"];
+const MONSTER_CAVE_CLEAR_REWARDS = ["灵石 × 30", "修炼经验 × 40"];
 const ADVENTURE_BATTLES = Object.freeze({
   "qingyun-mist-guardian": {
     name: "雾隐山魈",
@@ -66,11 +68,18 @@ export class BattleScene extends Phaser.Scene {
    * 没有传入时仍然使用第一章固定劫修，保证原主线战斗不受影响。
    */
   init(data = {}) {
+    // Phaser 会复用同一个 BattleScene 实例。上一场胜利、失败或逃跑留下的
+    // 防重复锁若不清零，下一只怪会在 0 血时被误判为“已经结算”，表现为卡死。
+    this.resetTransientBattleState();
     this.mapId = data.mapId || (data.mapMonster ? "qingyun-mountain" : "");
     this.mapMonster = data.mapMonster || (data.resumeBattle ? restoreMapMonster(data) : null);
     this.adventureBattle = ADVENTURE_BATTLES[data.adventureBattle] ? data.adventureBattle : null;
     // 从奇异玉光进入的测试战斗允许随时返回，而且返回后恢复状态，方便反复测试。
     this.isTestBattle = Boolean(data.testBattle);
+    this.returnSceneKey = data.returnSceneKey === SceneKeys.MONSTER_CAVE ? SceneKeys.MONSTER_CAVE : SceneKeys.VILLAGE;
+    this.dungeonId = data.dungeonId || "";
+    this.dungeonRunNumber = Math.max(0, Math.floor(Number(data.dungeonRunNumber) || 0));
+    this.dungeonSpawnId = data.dungeonSpawnId || "";
     this.battleResumeData = {
       resumeBattle: true,
       testBattle: this.isTestBattle,
@@ -78,7 +87,22 @@ export class BattleScene extends Phaser.Scene {
       mapId: this.mapId,
       mapMonsterId: this.mapMonster?.id || data.mapMonsterId || "",
       monsterTemplateId: this.mapMonster?.monsterTemplateId || data.monsterTemplateId || "",
+      returnSceneKey: this.returnSceneKey,
+      dungeonId: this.dungeonId,
+      dungeonRunNumber: this.dungeonRunNumber,
+      dungeonSpawnId: this.dungeonSpawnId,
     };
+  }
+
+  /** 每次进入或重开战斗时，重置只属于上一场战斗的界面与切场状态。 */
+  resetTransientBattleState() {
+    this.isReturningToVillage = false;
+    this.isResolvingDefeat = false;
+    this.isVictoryResolved = false;
+    this.isLeavingVictory = false;
+    this.victoryDestination = null;
+    this.victoryDialog = null;
+    this.defeatDialog = null;
   }
 
   preload() {
@@ -126,6 +150,10 @@ export class BattleScene extends Phaser.Scene {
       world: gameState.world,
       chapter: gameState.chapter,
       catalog: this.itemCatalog,
+      save: saveFirstChapterProgress,
+    });
+    this.dungeonRunService = new DungeonRunService({
+      world: gameState.world,
       save: saveFirstChapterProgress,
     });
     const adventureConfig = this.adventureBattle ? ADVENTURE_BATTLES[this.adventureBattle] : null;
@@ -299,7 +327,7 @@ export class BattleScene extends Phaser.Scene {
     // 保存离开战斗时的角色状态与地图坐标，刷新网页后仍会回到战斗前的位置。
     saveFirstChapterProgress();
     clearSceneResumeRoute();
-    this.scene.start(SceneKeys.VILLAGE);
+    this.scene.start(this.returnSceneKey, this.getReturnSceneData());
   }
 
   useSkill() {
@@ -505,7 +533,8 @@ export class BattleScene extends Phaser.Scene {
   /** 敌方动作、伤害结算完成后，判断胜负或把回合交还给玩家。 */
   finishEnemyTurn() {
     if (this.combat.winner === "enemy") {
-      this.setLog("本场战斗失败。请选择重新挑战，或返回青云山休整。", "#b84c3e");
+      const returnPlace = this.returnSceneKey === SceneKeys.MONSTER_CAVE ? "幽晶兽窟" : "青云山";
+      this.setLog(`本场战斗失败。请选择重新挑战，或返回${returnPlace}休整。`, "#b84c3e");
       this.updateBattleUi();
       this.showDefeatDialog();
       return;
@@ -520,9 +549,11 @@ export class BattleScene extends Phaser.Scene {
    */
   showDefeatDialog() {
     if (this.defeatDialog?.isOpen) return;
-    const routeHint = this.adventureBattle === "qingyun-mist-guardian"
-      ? "返回青云山后，任务仍停留在“击败雾隐山魈”。"
-      : "返回青云山后，之后仍可再次进入战斗。";
+    const routeHint = this.returnSceneKey === SceneKeys.MONSTER_CAVE
+      ? "返回幽晶兽窟后，这只妖兽仍在原处，可以再次挑战。"
+      : this.adventureBattle === "qingyun-mist-guardian"
+        ? "返回青云山后，任务仍停留在“击败雾隐山魈”。"
+        : "返回青云山后，之后仍可再次进入战斗。";
 
     this.defeatDialog = new XianxiaDialog(this).open({
       title: "战斗失败",
@@ -548,7 +579,7 @@ export class BattleScene extends Phaser.Scene {
           onClick: () => this.retryBattle(),
         },
         {
-          label: "返回青云山",
+          label: this.returnSceneKey === SceneKeys.MONSTER_CAVE ? "返回幽晶兽窟" : "返回青云山",
           variant: "secondary",
           x: 158,
           y: 120,
@@ -609,9 +640,9 @@ export class BattleScene extends Phaser.Scene {
       this.setLog(`${this.enemy.name}已被击败，但奖励结算出现异常。`, "#b84c3e");
       this.updateBattleUi();
       this.showVictoryDialog({
-        body: `${this.enemy.name}已被击败。\n\n奖励结算出现异常，但你仍可安全返回青云山。`,
-        destination: SceneKeys.VILLAGE,
-        buttonLabel: "返回青云山",
+        body: `${this.enemy.name}已被击败。\n\n奖励结算出现异常，但你仍可安全返回原地图。`,
+        destination: this.returnSceneKey,
+        buttonLabel: this.returnSceneKey === SceneKeys.MONSTER_CAVE ? "返回幽晶兽窟" : "返回青云山",
         notice: "战斗已经结束，请稍后检查本场奖励",
       });
     }
@@ -663,17 +694,45 @@ export class BattleScene extends Phaser.Scene {
     }
 
     if (this.mapMonster) {
+      const dungeonSettlementId = DungeonRunService.settlementId(
+        this.dungeonId,
+        this.dungeonRunNumber,
+        this.dungeonSpawnId,
+      );
       const result = this.rewardService.settleVictory({
-        monsterId: this.mapMonster.id,
+        monsterId: dungeonSettlementId || this.mapMonster.id,
         rewards: this.mapMonster.drops?.length ? this.mapMonster.drops : DEFAULT_MONSTER_REWARDS,
       });
+      let clearRewardText = "";
+      if (dungeonSettlementId && (result.ok || result.alreadySettled)) {
+        const defeatedResult = this.dungeonRunService.markDefeated(
+          this.dungeonId,
+          this.dungeonSpawnId,
+          this.dungeonRunNumber,
+        );
+        const requiredSpawnIds = getMapObjects(this.dungeonId)
+          .filter((object) => object.type === "monster")
+          .map((object) => object.id);
+        const clearState = defeatedResult.ok
+          ? this.dungeonRunService.getClearState(this.dungeonId, this.dungeonRunNumber, requiredSpawnIds)
+          : { ok: false, cleared: false };
+        if (clearState.ok && clearState.cleared) {
+          const clearResult = this.rewardService.settleVictory({
+            monsterId: DungeonRunService.clearSettlementId(this.dungeonId, this.dungeonRunNumber),
+            rewards: MONSTER_CAVE_CLEAR_REWARDS,
+          });
+          if (clearResult.ok) clearRewardText = clearResult.rewardText;
+        }
+      }
       const rewardText = result.rewardText || result.message;
-      this.setLog(`${this.enemy.name}被击败，实际获得：${rewardText}。`, "#87642d");
+      const clearSuffix = clearRewardText ? ` 本轮清剿完成，额外获得：${clearRewardText}。` : "";
+      this.setLog(`${this.enemy.name}被击败，实际获得：${rewardText}。${clearSuffix}`, "#87642d");
       this.updateBattleUi();
       this.showVictoryDialog({
-        body: `${this.enemy.name}已被击败。\n\n实际获得：${rewardText}`,
-        destination: SceneKeys.VILLAGE,
-        buttonLabel: "返回青云山",
+        body: `${this.enemy.name}已被击败。\n\n实际获得：${rewardText}`
+          + (clearRewardText ? `\n\n本轮清剿完成！额外获得：${clearRewardText}` : ""),
+        destination: this.returnSceneKey,
+        buttonLabel: this.returnSceneKey === SceneKeys.MONSTER_CAVE ? "返回幽晶兽窟" : "返回青云山",
       });
       return;
     }
@@ -720,7 +779,13 @@ export class BattleScene extends Phaser.Scene {
     const destination = this.victoryDestination || SceneKeys.VILLAGE;
     this.victoryDialog?.close({ immediate: true });
     clearSceneResumeRoute();
-    this.scene.start(destination);
+    this.scene.start(destination, this.getReturnSceneData());
+  }
+
+  getReturnSceneData() {
+    return this.returnSceneKey === SceneKeys.MONSTER_CAVE
+      ? { dungeonId: this.dungeonId, resumeRun: true }
+      : {};
   }
 
   setLog(text, color = "#553d36") { this.battleHud?.setLog(text, color); }

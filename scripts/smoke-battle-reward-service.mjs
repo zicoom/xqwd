@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { BattleRewardService, parseRewardText } from "../src/domain/rewards/BattleRewardService.js";
 import { RewardCatalog } from "../src/domain/rewards/RewardCatalog.js";
+import { DungeonRunService } from "../src/domain/world/DungeonRunService.js";
 
 const items = [
   { id: "wolf-pelt", name: "狼皮" },
@@ -53,6 +54,17 @@ assert.equal(duplicate.alreadySettled, true);
 assert.equal(state.player.spiritStones, 8);
 assert.equal(saveCount, 1);
 
+const clearSettlementId = DungeonRunService.clearSettlementId("monster-cave-1", 3);
+const clearReward = service.settleVictory({
+  monsterId: clearSettlementId,
+  rewards: ["灵石 × 30", "修炼经验 × 40"],
+});
+assert.equal(clearReward.ok, true);
+assert.equal(state.player.spiritStones, 38);
+assert.equal(state.player.cultivationExp, 50);
+assert.equal(service.settleVictory({ monsterId: clearSettlementId, rewards: ["灵石 × 999"] }).alreadySettled, true);
+assert.equal(state.player.spiritStones, 38, "同一轮清剿奖励不得重复发放");
+
 const eliteState = makeState();
 const elite = makeService(eliteState);
 assert.equal(elite.settleVictory({ chapterElite: true, rewards: ["低阶回灵丹 × 1"] }).ok, true);
@@ -78,4 +90,4 @@ assert.equal(cappedReward.cultivationOverflow, 7);
 assert.equal(cappedReward.needsBreakthrough, true);
 assert.match(cappedReward.rewardText, /需要突破/);
 
-console.log("战斗奖励冒烟测试通过：解析、入账、未登记提示、章节推进和防重复结算正确。");
+console.log("战斗奖励冒烟测试通过：解析、入账、清场奖励、章节推进和防重复结算正确。");

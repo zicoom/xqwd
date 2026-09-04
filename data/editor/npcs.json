@@ -8,6 +8,7 @@
     "avatarData": "/public/assets/images/editor/npcs/npc-qixia-elder-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-qixia-elder-imageData.webp",
+    "dialogueMode": "branch",
     "dialogue": [
       "……"
     ],
@@ -16,7 +17,7 @@
       "nodes": [
         {
           "id": "elder-start",
-          "text": "村长：昨夜子时，青云山方向忽然亮起一道青白异光，村外的灵兽都躁动不安。\n村长：我担心山中封存的古物出了变故。你若有空，可愿替栖霞村前去查看？",
+          "text": "村长：昨夜子时，青云山方向忽然亮起一道青白异光，村外的灵兽都躁动不安。村长：我担心山中封存的古物出了变故。你若有空，可愿替栖霞村前去查看？",
           "choices": [
             {
               "id": "elder-start-1",
@@ -165,6 +166,7 @@
     "avatarData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-1787324268616-9790-imageData.webp",
+    "dialogueMode": "simple",
     "dialogue": [
       "新 NPC1：你好。"
     ],
@@ -216,19 +218,11 @@
     "avatarData": "/public/assets/images/editor/npcs/npc-qixia-merchant-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-qixia-merchant-imageData.webp",
+    "dialogueMode": "simple",
     "dialogue": [
       "云游四方，偶得些灵草丹方。道友若有需要，尽可看看。"
     ],
-    "dialogueTree": {
-      "startId": "node-1787388309427-1",
-      "nodes": [
-        {
-          "id": "node-1787388309427-1",
-          "text": "云游四方，偶得些灵草丹方。道友若有需要，尽可看看。",
-          "choices": []
-        }
-      ]
-    },
+    "dialogueTree": null,
     "skills": [],
     "profile": {
       "gender": "男",
@@ -276,44 +270,15 @@
     "avatarData": "/public/assets/images/editor/npcs/npc-1787797767226-1013-imageData.webp",
     "mapPortraitData": "",
     "imageData": "/public/assets/images/editor/npcs/npc-1787797767226-1013-imageData.webp",
-    "dialogue": [],
-    "dialogueTree": {
-      "startId": "node-1787797914850-1",
-      "nodes": [
-        {
-          "id": "node-1787797914850-1",
-          "text": "来者止步。前方乃天剑宗山门，非本宗弟子与持令之人，不得擅自入内。",
-          "choices": [
-            {
-              "id": "choice-1787817445743",
-              "text": "",
-              "nextId": "",
-              "action": ""
-            }
-          ]
-        },
-        {
-          "id": "node-1787817596117-6",
-          "text": "我观你灵台清明，虽修为尚浅，却有几分剑修之资。你可是想入山一观？",
-          "choices": []
-        },
-        {
-          "id": "node-1787817609459-6",
-          "text": "天剑宗不问出身，却极重心性。持此令牌，只代表你获准进入外门，并非已经拜入宗门。",
-          "choices": []
-        },
-        {
-          "id": "node-1787817625619-4",
-          "text": "入山之后须谨守门规，不可扰乱门中修士，也不可擅闯宗门禁地。",
-          "choices": []
-        },
-        {
-          "id": "node-1787817630819-5",
-          "text": "收好这枚天剑宗令牌。山门禁制自会辨认你的身份——去吧，莫负此行。",
-          "choices": []
-        }
-      ]
-    },
+    "dialogueMode": "simple",
+    "dialogue": [
+      "来者止步。前方乃天剑宗山门，非本宗弟子与持令之人，不得擅自入内。",
+      "我观你灵台清明，虽修为尚浅，却有几分剑修之资。你可是想入山一观？",
+      "天剑宗不问出身，却极重心性。持此令牌，只代表你获准进入外门，并非已经拜入宗门。",
+      "入山之后须谨守门规，不可扰乱门中修士，也不可擅闯宗门禁地。",
+      "收好这枚天剑宗令牌。山门禁制自会辨认你的身份——去吧，莫负此行。"
+    ],
+    "dialogueTree": null,
     "skills": [],
     "profile": {
       "gender": "男",
